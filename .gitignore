@@ -137,3 +137,64 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Electron build outputs
+dist/
+dist-electron/
+release/
+out/
+
+# electron-vite dev temp
+.vite/
+
+# electron-builder artifacts and metadata
+*.dmg
+*.AppImage
+*.deb
+*.rpm
+*.snap
+*.blockmap
+builder-debug.yml
+builder-effective-config.yaml
+
+# Local environment — never commit
+.env
+.env.local
+*.env
+
+# TypeScript build cache
+*.tsbuildinfo
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test artifacts
+coverage/
+.nyc_output/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# node-pty native build (gets rebuilt on install)
+build/
