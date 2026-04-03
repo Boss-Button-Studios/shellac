@@ -104,9 +104,15 @@ Work through these phases in order. Do not begin a phase until the previous phas
    - Shell spawn with CWD hook injection (spec §15)
    - `onData` handler with OSC CWD stripping
    - `PTY_WRITE`, `PTY_RESIZE` IPC handlers
+   - Register Electron application menu with Edit submenu (Copy / Paste / Select All) using platform accelerators — required for clipboard bridge in sandboxed renderer (spec §17 clipboard)
 2. Write `src/lib/BlockStore.ts` — full Zustand store with instance UUID and 200-block cap
 3. Write `src/components/Terminal.tsx` — xterm.js only (no blocks yet). Wire PTY data in and keyboard data out. Verify with `console.log` before touching xterm.
+   - `copyOnSelect: true` on xterm instance
+   - Keyboard handler: `Cmd+C` / `Ctrl+Shift+C` → `terminal.getSelection()` → `navigator.clipboard.writeText()`
+   - Keyboard handler: `Cmd+V` / `Ctrl+Shift+V` → `navigator.clipboard.readText()` → `ptyWrite(text)`
+   - `Ctrl+C` is NOT wired to SIGINT — Stop button is the only SIGINT path
 4. Write `src/components/TerminalBlock.tsx` — render with static mock data first, then wire to store. Include "Help me fix this" button stub (visible but non-functional at this stage).
+5. Add Stop button to Terminal layout — visible when `activeBlockId` is set, hidden otherwise. Calls `ptyWrite('\x03')`. NLBar hidden/disabled while Stop button is showing.
 
 **Regression gate** → `test_results/regression_step01.txt`
 - [ ] Real shell spawns and is interactive (type `echo hello`, see `hello`)
@@ -115,6 +121,12 @@ Work through these phases in order. Do not begin a phase until the previous phas
 - [ ] `BlockStore.startBlock()` + `appendOutput()` + `finishBlock()` round-trip works (unit test or console verification)
 - [ ] Static mock block renders with correct structure: prompt glyph, command, exit badge, elapsed time
 - [ ] Block cap: manually set cap to 3 in test, verify oldest block drops when 4th is added
+- [ ] Select text in xterm → clipboard updated immediately (copyOnSelect)
+- [ ] `Cmd+C` / `Ctrl+Shift+C` copies xterm selection to clipboard
+- [ ] `Cmd+V` / `Ctrl+Shift+V` pastes clipboard text into PTY
+- [ ] `Ctrl+C` does NOT send SIGINT (verify: run `sleep 10`, press Ctrl+C, process continues)
+- [ ] Stop button appears while `sleep 10` runs; click it → process terminates
+- [ ] Stop button hidden when no command is running; NLBar visible
 
 ---
 

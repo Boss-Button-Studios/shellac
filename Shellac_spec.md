@@ -912,6 +912,18 @@ All three lines are copyable. No cloud fallback exists. This is the complete rec
 - xterm auto-resizes via `FitAddon` + `ResizeObserver`
 - Scroll: stay at bottom unless user scrolled up; resume on new output if already at bottom
 
+**Stop button** — shown in the input area when `activeBlockId` is set (a command is running); hidden otherwise. Sends `\x03` (SIGINT) via `ptyWrite`. Does not go through SuggestionCard. Replaces the NLBar input surface while a command is running — NLBar is hidden or disabled during active execution, Stop is prominent.
+
+Rationale: `Ctrl+C` is reserved for clipboard copy (see below). SIGINT must remain accessible — the Stop button is the replacement path.
+
+**Clipboard**
+
+- `copyOnSelect: true` on the xterm instance — selecting text copies immediately to system clipboard. This is terminal-standard behavior.
+- `Cmd+C` (macOS) / `Ctrl+Shift+C` (Linux): explicit copy of current xterm selection.
+- `Cmd+V` (macOS) / `Ctrl+Shift+V` (Linux): paste from system clipboard into PTY via `ptyWrite`.
+- Electron application menu registers an Edit submenu with Copy / Paste / Select All using platform accelerators. Required for the system clipboard bridge to function in the sandboxed renderer.
+- `Ctrl+C` is **not** wired to SIGINT via keyboard — the Stop button is the only SIGINT path.
+
 ---
 
 ## 18. Sidebar
