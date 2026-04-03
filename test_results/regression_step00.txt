@@ -1,0 +1,101 @@
+Phase 0 — Foundation
+Date: 2026-04-03
+
+=== WHAT WAS TESTED ===
+1. npm run dev starts without Electron security warnings
+2. src/types/index.ts compiles with zero TypeScript errors
+3. IPC object contains exactly the channels defined in spec §6
+4. Security configuration block in electron/main.ts matches spec §8a, §8b, §8c, §8d
+5. preload.ts exposes exactly the IPC surface listed in spec §17
+
+=== HOW IT WAS TESTED ===
+
+[TypeScript]
+Command: npx tsc --noEmit
+Result: zero errors, zero output
+
+[IPC constants — code inspection]
+Verified src/types/index.ts IPC object against spec §6. All 9 channels present:
+  PTY_WRITE, PTY_RESIZE, PTY_DATA, PTY_EXIT, PTY_CWD,
+  CONFIG_GET, CONFIG_SET, INSTALL_STATUS, INSTALL_START
+No extras. None missing.
+
+[Dev server / Electron launch]
+Command: ELECTRON_RUN_AS_NODE="" DISPLAY=:0 timeout 15 npm run dev
+Environment note: ELECTRON_RUN_AS_NODE=1 is set by the sandbox environment.
+Running with it explicitly unset is required; vite-plugin-electron should handle
+this automatically in the real dev environment (macOS/Linux workstation).
+
+Vite started: "VITE v5.4.21 ready in 304ms"
+Main process built: "dist-electron/main.js 111.66 kB built in 506ms"
+Preload built: "dist-electron/preload.js 2.07 kB built in 234ms"
+Electron launched with no security-related console warnings.
+
+DevTools Autofill errors observed (benign):
+  "Request Autofill.enable failed" / "Request Autofill.setAddresses failed"
+  These are Chrome DevTools protocol noise — not security issues.
+  Confirmed: no nodeIntegration warnings, no contextIsolation warnings,
+  no sandbox warnings, no webSecurity warnings.
+
+[CSP — code inspection]
+session.defaultSession.webRequest.onHeadersReceived sets:
+  "default-src 'self'; script-src 'self'; connect-src 'self' http://localhost:11434; style-src 'self' 'unsafe-inline';"
+Visual verification via DevTools Network tab requires a running interactive
+session and should be confirmed by Jarrod at next hands-on review.
+
+[Security flags — code inspection against spec §8a]
+nodeIntegration: false             ✓
+contextIsolation: true             ✓
+sandbox: true                      ✓
+webSecurity: true                  ✓
+allowRunningInsecureContent: false ✓
+preload: path.join(__dirname, 'preload.mjs') ✓
+minWidth: 900, minHeight: 600      ✓
+width: 1100, height: 700           ✓
+
+[PTY_WRITE newline stripping — code inspection against spec §8c]
+ipcMain.on(IPC.PTY_WRITE, (_e, data) => {
+  const sanitized = data.split('\n')[0]
+  ptyProcess?.write(sanitized + '\n')
+})
+Correct: strips everything after first newline. One command per call.
+
+[Config validation — code inspection against spec §8d]
+ollamaBaseUrl: z.string().url().startsWith('http://localhost') ✓
+All ConfigSchema fields present. loadConfig() returns DEFAULT_CONFIG on any parse error. ✓
+
+[preload.ts IPC surface — code inspection against spec §17]
+Exposed via contextBridge.exposeInMainWorld('electronAPI', api):
+  ptyWrite, ptyResize, onPtyData, onPtyExit, onPtyCwd,
+  configGet, configSet, onInstallStatus
+No raw ipcRenderer exposure. All channels use IPC constants from src/types/index.ts.
+
+=== RESULTS ===
+
+[PASS] TypeScript: zero errors
+[PASS] IPC constants: exact match to spec, no extras, none missing
+[PASS] npm run dev: Electron launches without security warnings
+[PASS] Security flags: match spec §8a exactly
+[PASS] CSP: correct per code inspection (visual DevTools verification pending)
+[PASS] PTY_WRITE newline stripping: correct per spec §8c
+[PASS] Config Zod schema: correct per spec §8d, including localhost constraint
+[PASS] preload.ts: correct IPC surface, no raw ipcRenderer leak
+
+=== UNEXPECTED BEHAVIOR ===
+
+1. ELECTRON_RUN_AS_NODE=1 is set by the sandbox environment, which causes
+   require('electron') to resolve to the npm package path string instead of the
+   Electron runtime module. This is a sandbox artifact — not a bug in the app.
+   Workaround: unset ELECTRON_RUN_AS_NODE when running. Real dev environments
+   (macOS/Linux workstations) will not have this set.
+
+2. xterm@5.3.0 and xterm-addon-fit@0.8.0 npm packages are deprecated in favor
+   of @xterm/xterm and @xterm/addon-fit. The spec currently specifies the old
+   package names. FLAGGED — awaiting direction from Jarrod on whether to use
+   the scoped packages in Phase 1.
+
+3. The Vite CJS Node API deprecation warning is a vite-plugin-electron build
+   configuration detail — not a concern for the app itself.
+
+=== PHASE 0 GATE: PASS ===
+Phase 1 (PTY + Terminal Core) may begin.
