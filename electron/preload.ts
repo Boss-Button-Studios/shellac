@@ -53,6 +53,10 @@ const api: ElectronAPI = {
     ipcRenderer.on(IPC.INSTALL_STATUS, handler)
     return () => ipcRenderer.off(IPC.INSTALL_STATUS, handler)
   },
+
+  // Clipboard via main process — navigator.clipboard is blocked in sandboxed renderer.
+  clipboardRead:  ()              => ipcRenderer.invoke(IPC.CLIPBOARD_READ),
+  clipboardWrite: (text: string) => ipcRenderer.invoke(IPC.CLIPBOARD_WRITE, text),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', api)

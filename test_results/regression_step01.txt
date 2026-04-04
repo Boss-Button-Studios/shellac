@@ -1,5 +1,6 @@
 Phase 1 — PTY + Terminal Core
 Date: 2026-04-03
+Tester: JMO (interactive), Claude (automated)
 
 === WHAT WAS TESTED ===
 1. Real shell spawns and is interactive
@@ -8,107 +9,76 @@ Date: 2026-04-03
 4. BlockStore startBlock/appendOutput/finishBlock round-trip
 5. Block cap enforcement
 6. getContextBlocks exclusion logic
-7. Terminal.tsx renders with xterm, block list, stop button, NLBar placeholder
-8. TerminalBlock renders with correct structure
-9. copyOnSelect via onSelectionChange (xterm v6)
-10. Clipboard shortcuts and Stop button wiring
+7. Clipboard — select-to-copy, Ctrl+Shift+C, Ctrl+Shift+V
+8. Ctrl+C does not send SIGINT
+9. Stop button wiring (untestable until Phase 4)
 
-=== HOW IT WAS TESTED ===
+=== BUGS FOUND AND FIXED DURING TESTING ===
 
-[TypeScript]
-Command: npx tsc --noEmit
-Result: zero errors
+1. preload.mjs vs preload.js — vite-plugin-electron builds to .js; BrowserWindow
+   referenced .mjs. Preload never loaded; window.electronAPI was undefined;
+   React unmounted on useEffect throw. Fixed: changed path to preload.js.
 
-[Dev server / Electron launch]
-Command: ELECTRON_RUN_AS_NODE="" DISPLAY=:0 timeout 20 npm run dev
-Result: Vite ready, main.js 114.26 kB built, Electron launched.
-No security warnings, no PTY errors in console.
-Autofill DevTools noise only (benign, same as Phase 0).
+2. CSP blocked Vite dev inline script — script-src 'self' blocked @vitejs/plugin-react
+   Fast Refresh preamble. Fixed: 'unsafe-inline' added to script-src in dev mode only.
+   Also added ws://localhost:5173 to connect-src for Vite HMR WebSocket.
 
-[BlockStore logic — inline Node.js test]
-Three assertions verified programmatically:
+3. PTY_WRITE appended '\n' to every character — typing "e" sent "e\n" and
+   immediately executed command "e". Spec §8c was written for NLBar complete-command
+   strings. Raw xterm keyboard input uses '\r' (Enter) for execution. Fixed: handler
+   now strips after first '\n' for security but does not append '\n'. Senders are
+   responsible for their own line endings.
 
-  PASS: startBlock + appendOutput + finishBlock round-trip
-    - startBlock() creates block with correct shape
-    - appendOutput() accumulates chunk into block.output
-    - finishBlock() sets exitCode and finishedAt
-    - block found in store with correct values
+4. Ctrl+C still sent SIGINT — term.onKey was passing '\x03' to ptyWrite() despite
+   the comment saying it was blocked. Fixed: explicit early return on key === '\x03'.
 
-  PASS: block cap drops oldest (cap=3, added 4, first is b1)
-    - After 4 insertions with cap=3, array length is 3
-    - Oldest block (b0) dropped, b1 is now first
-    - Newest block (b3) present at end
+5. navigator.clipboard blocked in sandboxed renderer — both writeText() and
+   readText() denied. Fixed: routed all clipboard operations through Electron's
+   native clipboard module via IPC (CLIPBOARD_READ, CLIPBOARD_WRITE channels added
+   to IPC constants; types.ts unfrozen for this necessary addition). Shortcut
+   detection moved from term.onKey to window.addEventListener('keydown') since
+   xterm was suppressing modifier combos before onKey fired.
 
-  PASS: getContextBlocks excludes active and flagged blocks
-    - Active block (finishedAt: null) excluded
-    - Flagged block (contextFlagged: true) excluded
-    - Two finished non-flagged blocks returned
+6. Shell died after `exit` with no recovery — PTY exited, terminal went silent,
+   no console log visible. Fixed: PTY respawns 500ms after exit; console.log added
+   in both main process and renderer PTY_EXIT handlers.
 
-[PTY shell spawn — code inspection]
-spawnPty() in electron/main.ts:
-  - pty.spawn(config.shell, [], { name: 'xterm-256color', cwd: os.homedir() }) ✓
-  - CWD hook injected for 'zsh' and 'bash' shells ✓
-  - onData: CWD_REGEX strips OSC sequences, sends PTY_DATA (clean) and PTY_CWD ✓
-  - onExit: sends PTY_EXIT with exitCode ✓
+=== AUTOMATED TEST RESULTS ===
 
-[PTY_WRITE control character handling — code inspection]
-  - Single-byte control chars (e.g. \x03) written directly, no '\n' appended ✓
-  - Multi-byte input: split('\n')[0] + '\n' (spec §8c) ✓
+[TypeScript] npx tsc --noEmit → zero errors ✓
 
-[Electron application menu — code inspection]
-  - buildAppMenu() sets Edit submenu: Copy / Paste / Select All
-  - macOS: Cmd+C / Cmd+V / Cmd+A
-  - Linux: Ctrl+Shift+C / Ctrl+Shift+V / Ctrl+Shift+A
-  - Ctrl+C intentionally absent from menu (Stop button is SIGINT path) ✓
+[BlockStore logic — inline Node.js]
+  PASS: startBlock + appendOutput + finishBlock round-trip ✓
+  PASS: block cap drops oldest (cap=3, added 4, first is b1) ✓
+  PASS: getContextBlocks excludes active and flagged blocks ✓
 
-[xterm copyOnSelect — code inspection]
-  - term.onSelectionChange() → clipboard.writeText(term.getSelection())
-  - Note: @xterm/xterm v6 removed the copyOnSelect option from ITerminalOptions.
-    Implemented via event handler instead. Behavior is identical. ✓
+[Dev server launch] Electron starts without security warnings ✓
 
-[Keyboard clipboard shortcuts — code inspection]
-  - Cmd+C (mac) / Ctrl+Shift+C (linux): getSelection() → clipboard.writeText() ✓
-  - Cmd+V (mac) / Ctrl+Shift+V (linux): clipboard.readText() → ptyWrite() ✓
-  - Ctrl+C: NOT wired to SIGINT ✓
+=== INTERACTIVE TEST RESULTS (JMO) ===
 
-[Stop button — code inspection]
-  - Visible when activeBlockId !== null ✓
-  - Hidden when activeBlockId === null; NLBar placeholder shown ✓
-  - onClick: ptyWrite('\x03') ✓
-  - \x03 is a single-byte control char — passes through PTY_WRITE handler
-    without newline appended (per fix above) ✓
+[JMO ✓] Type `echo hello` → see `hello` in xterm
+[JMO ✓] Type `exit` → PTY_EXIT received logged in DevTools console; shell respawns
+[JMO ✓] Run `cd /tmp` → OSC 1337 sequence absent from visible output
+[JMO ✓] Select text in xterm → clipboard updated immediately (copyOnSelect)
+[JMO ✓] Ctrl+Shift+C → explicit copy of xterm selection to clipboard
+[JMO ✓] Ctrl+Shift+V → pastes clipboard text into PTY
+[JMO ✓] Ctrl+C → process does NOT receive SIGINT; sleep 10 continues running
+[N/A]   Cmd+C / Cmd+V → not testable (no Mac hardware)
+[ ]     Stop button visible while command runs → untestable until Phase 4 (NLBar
+        calls startBlock; without it activeBlockId is always null)
+[ ]     Stop button hidden at prompt, NLBar visible → visually confirmed correct
+        (placeholder shows), functional test deferred to Phase 4
 
-[TerminalBlock structure — code inspection]
-  - ansi-to-html instantiated with escapeXML: true (non-negotiable) ✓
-  - Header: $ glyph + command + exit badge (✓ 0 / ✗ N) + elapsed time ✓
-  - nlQuery label rendered above header when present ✓
-  - Output area: border-left amber, ansi→html with XSS protection ✓
-  - Truncation at 100 lines with "Show all N lines" toggle ✓
-  - Click header: copies command to clipboard ✓
-  - "Help me fix this" button: visible on non-zero exit, disabled (stub for Phase 4) ✓
+=== NOTES ===
+- @xterm/xterm v6 removed copyOnSelect from ITerminalOptions; implemented via
+  onSelectionChange. Behavior identical.
+- navigator.clipboard is blocked in Electron sandbox — permanent architectural
+  decision to route clipboard through main process IPC. Added CLIPBOARD_READ and
+  CLIPBOARD_WRITE to IPC constants (types.ts unfrozen for this; change is minimal
+  and necessary).
+- PTY_WRITE no longer appends '\n'. NLBar (Phase 4) must append '\r' when
+  submitting commands. Stop button sends '\x03' directly (no '\r' needed).
 
-=== ITEMS REQUIRING INTERACTIVE VERIFICATION BY JARROD ===
-The following require a running Electron window with a real shell session:
-
-- [ ] Type `echo hello` → see `hello` in xterm
-- [ ] Type `exit` → PTY_EXIT fires (check console)
-- [ ] Run `cd /tmp` → confirm \x1b]1337 absent from TerminalBlock output
-- [ ] Select text in xterm → clipboard updated immediately (copyOnSelect)
-- [ ] Cmd+C / Ctrl+Shift+C → copies selection
-- [ ] Cmd+V / Ctrl+Shift+V → pastes into PTY
-- [ ] Ctrl+C → process does NOT receive SIGINT (run `sleep 10`, press Ctrl+C, process continues)
-- [ ] Stop button visible while `sleep 10` runs; click → process terminates
-- [ ] Stop button hidden when shell is at prompt; NLBar placeholder visible
-
-=== UNEXPECTED BEHAVIOR ===
-1. @xterm/xterm v6 removed `copyOnSelect` from ITerminalOptions. Implemented
-   via `onSelectionChange` event instead — same behavior, different API.
-   Noted in regression for Phase 6 design token pass in case xterm API changes again.
-
-2. node-pty native binary compiled cleanly on this Linux environment.
-   macOS compile should be verified during Phase 7 packaging.
-
-=== PHASE 1 GATE: PASS (automated) / PENDING (interactive) ===
-Automated checks all pass. Interactive checks require Jarrod to verify in
-a running Electron session. Phase 2 (Context Pipeline) may begin in parallel
-with interactive verification.
+=== PHASE 1 GATE: PASS ===
+All testable items pass. Mac Cmd-key shortcuts deferred to Phase 7 hardware test.
+Stop button deferred to Phase 4. Phase 2 (Context Pipeline) may begin.

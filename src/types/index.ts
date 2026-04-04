@@ -114,21 +114,27 @@ export const IPC = {
   PTY_CWD:        'pty:cwd',
   CONFIG_GET:     'config:get',
   CONFIG_SET:     'config:set',
-  INSTALL_STATUS: 'install:status',   // main → renderer during first-run
-  INSTALL_START:  'install:start',    // renderer → main
+  INSTALL_STATUS:  'install:status',   // main → renderer during first-run
+  INSTALL_START:   'install:start',    // renderer → main
+  // Clipboard routed through main process — navigator.clipboard is blocked
+  // in Electron's sandboxed renderer (not accounted for in original spec).
+  CLIPBOARD_READ:  'clipboard:read',
+  CLIPBOARD_WRITE: 'clipboard:write',
 } as const;
 
 // ─── Electron API (exposed via preload contextBridge) ─────────────────────────
 
 export interface ElectronAPI {
-  ptyWrite:    (data: string) => void;
-  ptyResize:   (cols: number, rows: number) => void;
-  onPtyData:   (cb: (data: string) => void) => () => void;
-  onPtyExit:   (cb: (code: number) => void) => () => void;
-  onPtyCwd:    (cb: (cwd: string) => void) => () => void;
-  configGet:   () => Promise<AppConfig>;
-  configSet:   (partial: Partial<AppConfig>) => Promise<void>;
-  onInstallStatus: (cb: (status: InstallStatus) => void) => () => void;
+  ptyWrite:       (data: string) => void;
+  ptyResize:      (cols: number, rows: number) => void;
+  onPtyData:      (cb: (data: string) => void) => () => void;
+  onPtyExit:      (cb: (code: number) => void) => () => void;
+  onPtyCwd:       (cb: (cwd: string) => void) => () => void;
+  configGet:      () => Promise<AppConfig>;
+  configSet:      (partial: Partial<AppConfig>) => Promise<void>;
+  onInstallStatus:(cb: (status: InstallStatus) => void) => () => void;
+  clipboardRead:  () => Promise<string>;
+  clipboardWrite: (text: string) => Promise<void>;
 }
 
 // ─── Installer types ──────────────────────────────────────────────────────────

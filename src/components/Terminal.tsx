@@ -46,15 +46,17 @@ export default function Terminal() {
     if (containerRef.current) {
       term.open(containerRef.current)
       fitAddon.fit()
+      term.focus()
     }
 
     xtermRef.current    = term
     fitAddonRef.current = fitAddon
 
     // ── copyOnSelect — xterm v6 removed the option; implement via event ─────
+    // clipboard routed through main process (navigator.clipboard blocked in sandbox)
     term.onSelectionChange(() => {
       const sel = term.getSelection()
-      if (sel) navigator.clipboard.writeText(sel)
+      if (sel) window.electronAPI.clipboardWrite(sel)
     })
 
     // ── PTY data in ─────────────────────────────────────────────────────────
@@ -66,6 +68,7 @@ export default function Terminal() {
     })
 
     const offExit = window.electronAPI.onPtyExit(code => {
+      console.log('[Shellac] PTY_EXIT received, code:', code)
       const { activeBlockId: id } = useBlockStore.getState()
       if (id) finishBlock(id, code)
     })
@@ -77,34 +80,34 @@ export default function Terminal() {
       if (id) finishBlock(id, 0)
     })
 
-    // ── keyboard: data out ───────────────────────────────────────────────────
-    term.onKey(({ key, domEvent }) => {
-      const e = domEvent
-
-      // Clipboard — copy (Cmd+C on mac, Ctrl+Shift+C on linux)
-      const isCopyShortcut = isMac
-        ? (e.metaKey && e.key === 'c')
+    // ── clipboard shortcuts — window-level listener fires before xterm ──────
+    // Using window.addEventListener instead of term.onKey because xterm can
+    // suppress modifier combos before onKey fires.
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isCopy = isMac
+        ? (e.metaKey && !e.shiftKey && e.key === 'c')
         : (e.ctrlKey && e.shiftKey && e.key === 'C')
-
-      if (isCopyShortcut) {
-        const sel = term.getSelection()
-        if (sel) navigator.clipboard.writeText(sel)
-        return
-      }
-
-      // Clipboard — paste (Cmd+V on mac, Ctrl+Shift+V on linux)
-      const isPasteShortcut = isMac
-        ? (e.metaKey && e.key === 'v')
+      const isPaste = isMac
+        ? (e.metaKey && !e.shiftKey && e.key === 'v')
         : (e.ctrlKey && e.shiftKey && e.key === 'V')
 
-      if (isPasteShortcut) {
-        navigator.clipboard.readText().then(text => {
+      if (isCopy) {
+        e.preventDefault()
+        const sel = term.getSelection()
+        if (sel) window.electronAPI.clipboardWrite(sel)
+      } else if (isPaste) {
+        e.preventDefault()
+        window.electronAPI.clipboardRead().then(text => {
           if (text) window.electronAPI.ptyWrite(text)
         })
-        return
       }
+    }
+    window.addEventListener('keydown', handleKeyDown)
 
-      // Ctrl+C is NOT wired to SIGINT — Stop button is the only SIGINT path
+    // ── keyboard: data out ───────────────────────────────────────────────────
+    term.onKey(({ key }) => {
+      // Ctrl+C (\x03) is explicitly swallowed — Stop button is the only SIGINT path
+      if (key === '\x03') return
       // All other keys go straight to the PTY
       window.electronAPI.ptyWrite(key)
     })
@@ -120,6 +123,7 @@ export default function Terminal() {
       offData()
       offExit()
       offCwd()
+      window.removeEventListener('keydown', handleKeyDown)
       ro.disconnect()
       term.dispose()
     }

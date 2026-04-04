@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session, Menu } from 'electron'
+import { app, BrowserWindow, ipcMain, session, Menu, clipboard } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -108,8 +108,11 @@ function spawnPty(config: AppConfig, win: BrowserWindow): void {
   })
 
   ptyProcess.onExit(({ exitCode }) => {
+    console.log(`[Shellac] Shell exited with code ${exitCode}`)
     win.webContents.send(IPC.PTY_EXIT, exitCode ?? 0)
     ptyProcess = null
+    // Respawn a fresh shell so the terminal remains usable after `exit`
+    setTimeout(() => { if (win) spawnPty(currentConfig, win) }, 500)
   })
 }
 
@@ -168,7 +171,7 @@ function createWindow() {
       sandbox:                     true,
       webSecurity:                 true,   // NEVER false
       allowRunningInsecureContent: false,
-      preload:                     path.join(__dirname, 'preload.mjs'),
+      preload:                     path.join(__dirname, 'preload.js'),
     },
     minWidth:  900,
     minHeight: 600,
@@ -179,15 +182,18 @@ function createWindow() {
   })
 
   // §8b — Content Security Policy
+  // Dev: 'unsafe-inline' added to script-src only — Vite's React Fast Refresh
+  // preamble is an inline script. Production build has no inline scripts.
+  const scriptSrc = VITE_DEV_SERVER_URL ? "'self' 'unsafe-inline'" : "'self'"
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          "default-src 'self'; " +
-          "script-src 'self'; " +
-          "connect-src 'self' http://localhost:11434; " +
-          "style-src 'self' 'unsafe-inline';"
+          `default-src 'self'; ` +
+          `script-src ${scriptSrc}; ` +
+          `connect-src 'self' http://localhost:11434 ws://localhost:5173; ` +
+          `style-src 'self' 'unsafe-inline';`
         ]
       }
     })
@@ -203,22 +209,28 @@ function createWindow() {
 
 // ─── IPC handlers ─────────────────────────────────────────────────────────────
 
-// §8c — one command per call, strip everything after the first newline.
-// Control characters (e.g. \x03 SIGINT from Stop button) are single-byte and
-// contain no newline — they are written as-is without appending '\n'.
+// §8c — one command per call: strip everything after the first '\n'.
+// This prevents command-chaining attacks through the IPC boundary.
+//
+// We do NOT append '\n'. Two distinct callers use this channel:
+//   • xterm keyboard input — sends raw sequences; Enter arrives as '\r'.
+//     Adding '\n' would execute every character typed.
+//   • NLBar (Phase 4) — sends a complete command string and appends '\r'
+//     itself before calling ptyWrite.
+// In both cases the security invariant holds: only the content before the
+// first Unix newline reaches the PTY.
 ipcMain.on(IPC.PTY_WRITE, (_e, data: string) => {
-  if (data.length === 1 && data.charCodeAt(0) < 0x20) {
-    // Raw control character — write directly, no newline
-    ptyProcess?.write(data)
-  } else {
-    const sanitized = data.split('\n')[0]
-    ptyProcess?.write(sanitized + '\n')
-  }
+  const sanitized = data.split('\n')[0]
+  if (sanitized) ptyProcess?.write(sanitized)
 })
 
 ipcMain.on(IPC.PTY_RESIZE, (_e, cols: number, rows: number) => {
   ptyProcess?.resize(cols, rows)
 })
+
+// Clipboard — routed through main process; navigator.clipboard blocked in sandbox
+ipcMain.handle(IPC.CLIPBOARD_READ,  ()              => clipboard.readText())
+ipcMain.handle(IPC.CLIPBOARD_WRITE, (_e, text: string) => { clipboard.writeText(text) })
 
 ipcMain.handle(IPC.CONFIG_GET, () => currentConfig)
 
