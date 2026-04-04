@@ -1,10 +1,16 @@
-import { app, BrowserWindow, ipcMain, session } from 'electron'
+import { app, BrowserWindow, ipcMain, session, Menu } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs'
+import os from 'node:os'
+import { createRequire } from 'node:module'
 import { z } from 'zod'
 import { DEFAULT_CONFIG, IPC } from '../src/types/index.ts'
 import type { AppConfig } from '../src/types/index.ts'
+
+// node-pty must only ever be imported in the main process.
+const require = createRequire(import.meta.url)
+const pty = require('node-pty') as typeof import('node-pty')
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -19,7 +25,6 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
   : RENDERER_DIST
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-// configPath deferred to app.whenReady() — app.getPath() is unavailable at module load time.
 
 const ConfigSchema = z.object({
   generatorModel:         z.string().min(1).max(100),
@@ -56,17 +61,101 @@ function saveConfig(configPath: string, config: AppConfig): void {
   }
 }
 
-// ─── PTY (Phase 0 stub — PTYManager wired in Phase 1) ────────────────────────
+// ─── PTY (§15) ────────────────────────────────────────────────────────────────
 
-// ptyProcess is null until Phase 1. The IPC handler is registered now so the
-// security contract (newline stripping) is in place from the start.
-let ptyProcess: { write: (data: string) => void } | null = null
+// Shell hooks that emit OSC 1337 CurrentDir on every prompt.
+// The renderer uses these to track CWD without shelling out.
+const CWD_HOOK: Record<string, string> = {
+  zsh:  'precmd() { printf "\\x1b]1337;CurrentDir=%s\\x07" "$(pwd)"; }\n',
+  bash: 'PROMPT_COMMAND=\'printf "\\x1b]1337;CurrentDir=%s\\x07" "$(pwd)"\'\n',
+}
+
+// Matches OSC 1337 CurrentDir sequences emitted by the hook above.
+const CWD_REGEX = /\x1b\]1337;CurrentDir=([^\x07]+)\x07/g
+
+type PtyProcess = ReturnType<typeof pty.spawn>
+let ptyProcess: PtyProcess | null = null
+
+function spawnPty(config: AppConfig, win: BrowserWindow): void {
+  const shellBin  = config.shell
+  const shellName = path.basename(shellBin)
+
+  ptyProcess = pty.spawn(shellBin, [], {
+    name: 'xterm-256color',
+    cwd:  os.homedir(),
+    env:  process.env as Record<string, string>,
+    cols: 80,
+    rows: 24,
+  })
+
+  // Inject CWD tracking hook if we know this shell. Unknown shells get no hook
+  // (CWD tracking simply won't work — not a security concern).
+  if (CWD_HOOK[shellName]) {
+    ptyProcess.write(CWD_HOOK[shellName])
+  }
+
+  ptyProcess.onData(data => {
+    // Strip OSC CWD sequences before sending to renderer.
+    // The extracted CWD is sent on a separate channel.
+    let clean = data
+    CWD_REGEX.lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = CWD_REGEX.exec(data)) !== null) {
+      win.webContents.send(IPC.PTY_CWD, match[1])
+      clean = clean.replace(match[0], '')
+    }
+    win.webContents.send(IPC.PTY_DATA, clean)
+  })
+
+  ptyProcess.onExit(({ exitCode }) => {
+    win.webContents.send(IPC.PTY_EXIT, exitCode ?? 0)
+    ptyProcess = null
+  })
+}
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
 let win: BrowserWindow | null = null
-let currentConfig: AppConfig = { ...DEFAULT_CONFIG }
+let currentConfig: AppConfig  = { ...DEFAULT_CONFIG }
 let configPath = ''
+
+// ─── Application menu (§17 clipboard) ────────────────────────────────────────
+// Minimal Edit menu required for the clipboard bridge to work in the sandboxed
+// renderer. No extra capabilities exposed beyond standard clipboard operations.
+
+function buildAppMenu(): void {
+  const isMac = process.platform === 'darwin'
+
+  const template: Electron.MenuItemConstructorOptions[] = [
+    // macOS requires the app name as the first menu item
+    ...(isMac ? [{ role: 'appMenu' as const }] : []),
+    {
+      label: 'Edit',
+      submenu: [
+        {
+          label: 'Copy',
+          // macOS: Cmd+C  |  Linux/Win: Ctrl+Shift+C
+          // Ctrl+C is intentionally left unwired to preserve terminal SIGINT
+          // (Stop button handles SIGINT — spec §17)
+          accelerator: isMac ? 'Cmd+C' : 'Ctrl+Shift+C',
+          role: 'copy',
+        },
+        {
+          label: 'Paste',
+          accelerator: isMac ? 'Cmd+V' : 'Ctrl+Shift+V',
+          role: 'paste',
+        },
+        {
+          label: 'Select All',
+          accelerator: isMac ? 'Cmd+A' : 'Ctrl+Shift+A',
+          role: 'selectAll',
+        },
+      ],
+    },
+  ]
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
 
 // ─── Window ───────────────────────────────────────────────────────────────────
 
@@ -90,7 +179,6 @@ function createWindow() {
   })
 
   // §8b — Content Security Policy
-  // connect-src whitelists only localhost:11434. No Anthropic endpoint.
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
@@ -113,23 +201,25 @@ function createWindow() {
   }
 }
 
-// ─── IPC handlers ────────────────────────────────────────────────────────────
+// ─── IPC handlers ─────────────────────────────────────────────────────────────
 
-// §8c — PTY_WRITE: one command per call, strip everything after first newline.
-// Prevents command-chaining attacks through the IPC boundary.
+// §8c — one command per call, strip everything after the first newline.
+// Control characters (e.g. \x03 SIGINT from Stop button) are single-byte and
+// contain no newline — they are written as-is without appending '\n'.
 ipcMain.on(IPC.PTY_WRITE, (_e, data: string) => {
-  const sanitized = data.split('\n')[0]
-  ptyProcess?.write(sanitized + '\n')
-})
-
-// PTY_RESIZE handler stub — wired to ptyProcess in Phase 1
-ipcMain.on(IPC.PTY_RESIZE, (_e, cols: number, rows: number) => {
-  if (ptyProcess && 'resize' in ptyProcess) {
-    (ptyProcess as { resize: (cols: number, rows: number) => void }).resize(cols, rows)
+  if (data.length === 1 && data.charCodeAt(0) < 0x20) {
+    // Raw control character — write directly, no newline
+    ptyProcess?.write(data)
+  } else {
+    const sanitized = data.split('\n')[0]
+    ptyProcess?.write(sanitized + '\n')
   }
 })
 
-// Config IPC
+ipcMain.on(IPC.PTY_RESIZE, (_e, cols: number, rows: number) => {
+  ptyProcess?.resize(cols, rows)
+})
+
 ipcMain.handle(IPC.CONFIG_GET, () => currentConfig)
 
 ipcMain.handle(IPC.CONFIG_SET, (_e, partial: Partial<AppConfig>) => {
@@ -153,11 +243,10 @@ app.on('activate', () => {
 })
 
 app.whenReady().then(() => {
-  // Safe to call app.getPath() only after app is ready
-  configPath = path.join(app.getPath('userData'), 'shellac-config.json')
+  configPath    = path.join(app.getPath('userData'), 'shellac-config.json')
   currentConfig = loadConfig(configPath)
+  buildAppMenu()
   createWindow()
+  // Spawn PTY after window exists so onData can send to win.webContents
+  if (win) spawnPty(currentConfig, win)
 })
-
-// Export for Phase 1 PTYManager wiring
-export { win, ptyProcess, currentConfig }
