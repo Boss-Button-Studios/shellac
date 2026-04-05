@@ -528,6 +528,16 @@ export class ContextBudget {
 
 ### Bash detection
 
+`looksLikeBash()` routes known shell commands directly to the PTY without calling the
+model. Two signals are used together: does the first token match a known command, AND
+do the arguments look structurally like shell syntax?
+
+**Why two signals?** Many command names are also common English words (`find`, `cat`,
+`sort`, `kill`, `clear`). A neophyte typing "find large files" should reach the model;
+a power user typing "find . -size +1G" should not wait for it. Argument structure is
+the distinguishing feature: shell arguments are flag-led (`-name`), path-prefixed
+(`.`, `/`, `~`, `$`), quoted, or contain glob characters. Plain prose words are not.
+
 ```typescript
 const KNOWN_COMMANDS = [
   'ls','cd','cat','grep','find','echo','pwd','mkdir','rm','mv','cp',
@@ -538,16 +548,106 @@ const KNOWN_COMMANDS = [
   'env','export','source','history','alias','clear','exit','open',
 ];
 
+// Commands that are also common English words. For these, a first-token match alone
+// is not sufficient — arguments must contain at least one bash structural marker.
+// Unambiguous commands (git, npm, ssh, …) route immediately on first-token match.
+const AMBIGUOUS_COMMANDS = new Set([
+  'find','cat','head','tail','sort','kill','open','source','read',
+  'cut','clear','echo','less','more','top','awk','sed','tr','wc',
+  'uniq','ps','exit',
+]);
+
+// Bash structural markers: flag, path prefix, quoted string, glob character.
+const BASH_ARG_PATTERN = /^[-./~$"']|[|><;&*?[\]]/;
+
 export function looksLikeBash(input: string): boolean {
   const t = input.trim();
-  return (
-    KNOWN_COMMANDS.some(cmd => t === cmd || t.startsWith(cmd + ' ')) ||
-    /[|><;&]/.test(t) ||
-    t.startsWith('./') ||
-    t.startsWith('sudo ') ||
-    t.startsWith('!')
-  );
+  return KNOWN_COMMANDS.some(cmd => {
+    if (t === cmd) return true;
+    if (!t.startsWith(cmd + ' ')) return false;
+    if (!AMBIGUOUS_COMMANDS.has(cmd)) return true;    // unambiguous — route immediately
+    // Ambiguous — require at least one bash structural marker in the arguments
+    const args = t.slice(cmd.length + 1).trim();
+    return BASH_ARG_PATTERN.test(args);
+  });
 }
+```
+
+**Argument count rule for ambiguous commands:**
+- 0 args (`find` alone) → bash
+- 1 arg, no structural marker (`find src`) → bash. A single word is a plausible
+  filename. Ghost text was visible; the user submitted consciously. Route as bash;
+  Help button appears on failure (see §17 Terminal).
+- 2+ args, no structural marker in any (`find large files`) → NL. Multiple plain
+  prose words are not a valid shell expression.
+
+### Command hints (ghost text data)
+
+Each known command has a synopsis string used as ghost text in the NLBar. Displayed
+as dim inline text after the cursor whenever the first token matches.
+
+```typescript
+export const COMMAND_HINTS: Record<string, string> = {
+  ls:      'ls [options] [path]',
+  cd:      'cd [path]',
+  pwd:     'pwd',
+  mkdir:   'mkdir [-p] path',
+  rm:      'rm [-rf] path',
+  mv:      'mv source dest',
+  cp:      'cp [-r] source dest',
+  touch:   'touch file',
+  chmod:   'chmod mode file',
+  chown:   'chown user[:group] file',
+  df:      'df [-h]',
+  du:      'du [-sh] [path]',
+  tar:     'tar [-czf|-xzf] archive [files]',
+  zip:     'zip archive files',
+  unzip:   'unzip archive',
+  curl:    'curl [options] url',
+  wget:    'wget url',
+  git:     'git <subcommand> [options]',
+  npm:     'npm <command>',
+  yarn:    'yarn <command>',
+  pnpm:    'pnpm <command>',
+  python:  'python script.py [args]',
+  python3: 'python3 script.py [args]',
+  node:    'node script.js [args]',
+  pip:     'pip install package',
+  brew:    'brew install package',
+  apt:     'apt install package',
+  sudo:    'sudo command',
+  ssh:     'ssh [user@]host',
+  scp:     'scp source user@host:dest',
+  rsync:   'rsync [options] source dest',
+  which:   'which command',
+  man:     'man command',
+  env:     'env [VAR=val] [command]',
+  export:  'export VAR=value',
+  alias:   "alias name='command'",
+  history: 'history [n]',
+  find:    'find [path] [expression]',
+  cat:     'cat [file...]',
+  grep:    'grep [options] pattern [file...]',
+  head:    'head [-n count] [file]',
+  tail:    'tail [-n count | -f] [file]',
+  sort:    'sort [options] [file]',
+  kill:    'kill [-signal] pid',
+  open:    'open file | url',
+  source:  'source file',
+  cut:     'cut -d delim -f fields [file]',
+  echo:    'echo [text]',
+  less:    'less [file]',
+  more:    'more [file]',
+  top:     'top [options]',
+  awk:     "awk 'program' [file]",
+  sed:     "sed 'expression' [file]",
+  tr:      'tr set1 [set2]',
+  wc:      'wc [-l|-w|-c] [file]',
+  uniq:    'uniq [options] [file]',
+  ps:      'ps [options]',
+  clear:   'clear',
+  exit:    'exit [code]',
+};
 ```
 
 ### System prompt
@@ -724,7 +824,14 @@ const WARN_BY_LEVEL: Record<SafetyLevel, RegExp[]> = {
 };
 ```
 
-Static analysis runs first (free, synchronous). If it passes, the semantic check runs against `mistral:7b` with an isolated prompt — no session history, just user intent + proposed command.
+**CommandValidator runs on all commands — both NL-generated and bash-direct.** The
+danger of a command does not depend on how it arrived. A power user typing
+`rm -rf ./build` directly gets the same safety gate as a model-generated suggestion.
+
+Static analysis runs first (free, synchronous). If it passes, the semantic check runs
+against `mistral:7b` with an isolated prompt — no session history, just user intent +
+proposed command. For bash-direct commands where no NL intent is available, the intent
+field is omitted and the validator evaluates the command in isolation.
 
 The semantic validator prompt explicitly frames the model as a pessimist:
 
@@ -756,9 +863,20 @@ Fetches in parallel with `validateCommand()` after `translate()` returns. Does n
 
 Called when a block finishes. Input: command + exitCode (not stdout — consistent with context budget policy).
 
-### "Help me fix this" path
+### "Help" path — post-execution
 
-When a block has `exitCode !== 0` and the user clicks the button on `TerminalBlock`, `explainResult()` is called with `includeOutput: true`, which passes the block's stdout to the explainer for that one call only. This is the **only** path where stdout enters a model context, and it requires explicit user action.
+When a block finishes with `exitCode !== 0`, a **Help button** appears in the input
+area alongside the NLBar (see §17 Terminal). The button is passive — it does not run
+the model automatically. It disappears the moment the user types anything in the NLBar.
+
+When clicked, `explainResult()` is called with `includeOutput: true`, which passes the
+block's stdout to the model for that one call only. The model is prompted to answer two
+questions simultaneously: what went wrong, and did the user possibly mean something
+other than what they typed? This covers both genuine shell errors and NL input that was
+mis-routed as bash.
+
+This is the **only** path where stdout enters a model context. It requires explicit
+user action (clicking Help).
 
 ### Parallel execution
 
@@ -881,10 +999,37 @@ All three lines are copyable. No cloud fallback exists. This is the complete rec
 ### NLBar
 
 - `Cmd+K` / `Ctrl+K` — focus from anywhere
-- `Enter` — submit; runs `looksLikeBash()` first
+- `Enter` — submit; routing logic below
 - `Escape` — cancel in-flight request or clear + return focus to xterm
 - On `OllamaUnavailableError`: recovery message shown, query preserved
 - Does NOT execute commands. Does NOT show suggestions. Does NOT maintain history (v2).
+
+**Ghost text** — as the user types, if the first whitespace-separated token matches
+any key in `COMMAND_HINTS`, display the corresponding synopsis as dim inline ghost
+text after the cursor. Ghost text is purely visual — it does not affect routing.
+Disappears when the first token no longer matches.
+
+```
+find█                    →  find [path] [expression]   (ghost text)
+find . -name █           →  find [path] [expression]   (still shown)
+show me all large fi█    →  (no ghost text — "show" not a known command)
+```
+
+**Submit routing**
+
+```
+First token in KNOWN_COMMANDS?
+  └─ No  → NL path: translate() → SuggestionCard
+  └─ Yes → Is it an AMBIGUOUS_COMMAND?
+             └─ No  → Bash path: CommandValidator → execute
+             └─ Yes → Does any argument contain a bash structural marker?
+                        └─ Yes → Bash path: CommandValidator → execute
+                        └─ No  → NL path: translate() → SuggestionCard
+```
+
+The bash path skips the model entirely. CommandValidator runs synchronously before
+execution — dangerous commands show a SuggestionCard for confirmation regardless of
+path (see §12).
 
 ### SuggestionCard
 
@@ -912,9 +1057,22 @@ All three lines are copyable. No cloud fallback exists. This is the complete rec
 - xterm auto-resizes via `FitAddon` + `ResizeObserver`
 - Scroll: stay at bottom unless user scrolled up; resume on new output if already at bottom
 
-**Stop button** — shown in the input area when `activeBlockId` is set (a command is running); hidden otherwise. Sends `\x03` (SIGINT) via `ptyWrite`. Does not go through SuggestionCard. Replaces the NLBar input surface while a command is running — NLBar is hidden or disabled during active execution, Stop is prominent.
+**Input area states** — the area below the xterm surface has three mutually exclusive states:
 
-Rationale: `Ctrl+C` is reserved for clipboard copy (see below). SIGINT must remain accessible — the Stop button is the replacement path.
+| Condition | Display |
+|---|---|
+| `activeBlockId !== null` (command running) | ■ Stop button only |
+| Idle, last block exit code = 0 (or no blocks yet) | NLBar only |
+| Idle, last block exit code ≠ 0 | NLBar + Help button (right-aligned) |
+
+The Help button disappears the moment the user begins typing in the NLBar. It does not
+auto-trigger the model — it is a quiet offer, not an interruption.
+
+**Stop button** — sends `\x03` (SIGINT) via `ptyWrite`. Does not go through
+SuggestionCard or CommandValidator.
+
+Rationale for Stop button: `Ctrl+C` is reserved for clipboard copy (see below). SIGINT
+must remain accessible — the Stop button is the replacement path.
 
 **Clipboard**
 

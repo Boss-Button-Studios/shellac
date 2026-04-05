@@ -1,0 +1,242 @@
+{
+  "_comment": "Platform-keyed risk map for system directories. Used by NavigatorTab to show warnings when the user navigates into sensitive areas. Risk levels: high = OS-critical, medium = system-managed (user data may not be there), low = typically safe but unusual for regular work.",
+  "darwin": {
+    "/": {
+      "risk": "high",
+      "label": "Filesystem root",
+      "reason": "Modifying files directly under / can render macOS unbootable."
+    },
+    "/bin": {
+      "risk": "high",
+      "label": "System binaries",
+      "reason": "Core macOS commands live here. Deletion or modification breaks the OS."
+    },
+    "/sbin": {
+      "risk": "high",
+      "label": "System administration binaries",
+      "reason": "Low-level system tools. Modification may prevent startup or networking."
+    },
+    "/usr": {
+      "risk": "high",
+      "label": "Unix system resources",
+      "reason": "Contains system libraries and tools. Managed by macOS — do not modify."
+    },
+    "/usr/bin": {
+      "risk": "high",
+      "label": "User-accessible system binaries",
+      "reason": "macOS system commands. Managed by SIP on modern macOS."
+    },
+    "/usr/sbin": {
+      "risk": "high",
+      "label": "System administration binaries",
+      "reason": "macOS system tools. Managed by SIP on modern macOS."
+    },
+    "/usr/lib": {
+      "risk": "high",
+      "label": "System libraries",
+      "reason": "Shared libraries required by system applications."
+    },
+    "/System": {
+      "risk": "high",
+      "label": "Core macOS system files",
+      "reason": "Protected by System Integrity Protection (SIP). Modification may require disabling SIP and can break macOS."
+    },
+    "/System/Library": {
+      "risk": "high",
+      "label": "macOS system library",
+      "reason": "Core OS frameworks and resources. SIP-protected on modern macOS."
+    },
+    "/Library": {
+      "risk": "medium",
+      "label": "System-wide application support",
+      "reason": "Shared preferences and extensions for all users. Changes affect every account."
+    },
+    "/Library/LaunchDaemons": {
+      "risk": "high",
+      "label": "System-wide launch daemons",
+      "reason": "Services that run as root at startup. Unauthorized additions are a common malware vector."
+    },
+    "/Library/LaunchAgents": {
+      "risk": "medium",
+      "label": "System-wide launch agents",
+      "reason": "Services that run at login for all users. Review carefully before adding anything here."
+    },
+    "/private": {
+      "risk": "high",
+      "label": "Private system files",
+      "reason": "Contains /private/etc, /private/var, /private/tmp — real locations behind /etc, /var, /tmp symlinks."
+    },
+    "/private/etc": {
+      "risk": "high",
+      "label": "System configuration files",
+      "reason": "hosts, sudoers, ssh config, and other critical system settings live here."
+    },
+    "/etc": {
+      "risk": "high",
+      "label": "System configuration files (symlink to /private/etc)",
+      "reason": "Critical system configuration. Changes here affect the entire OS."
+    },
+    "/var": {
+      "risk": "medium",
+      "label": "Variable system data (symlink to /private/var)",
+      "reason": "Logs, caches, mail spools. Usually safe to read, careful with writes."
+    },
+    "/tmp": {
+      "risk": "low",
+      "label": "Temporary files",
+      "reason": "Cleared on reboot. Safe for scratch work, but do not store anything important here."
+    },
+    "/Applications": {
+      "risk": "low",
+      "label": "Installed applications",
+      "reason": "Moving or deleting apps from here uninstalls them for all users."
+    },
+    "/dev": {
+      "risk": "high",
+      "label": "Device files",
+      "reason": "Writing to device files can corrupt disks or cause data loss."
+    },
+    "/Volumes": {
+      "risk": "medium",
+      "label": "Mounted volumes",
+      "reason": "External drives, disk images. Modifying files here affects the mounted media."
+    }
+  },
+  "linux": {
+    "/": {
+      "risk": "high",
+      "label": "Filesystem root",
+      "reason": "Modifying files directly under / can render Linux unbootable."
+    },
+    "/bin": {
+      "risk": "high",
+      "label": "Essential system binaries",
+      "reason": "Core commands (ls, cp, bash). Removing these makes the system unusable."
+    },
+    "/sbin": {
+      "risk": "high",
+      "label": "System administration binaries",
+      "reason": "Boot and repair tools. Required for system startup."
+    },
+    "/usr": {
+      "risk": "high",
+      "label": "User system resources",
+      "reason": "Most installed software lives here. Managed by the package manager."
+    },
+    "/usr/bin": {
+      "risk": "high",
+      "label": "User-accessible system binaries",
+      "reason": "Commands installed by the OS and package manager."
+    },
+    "/usr/sbin": {
+      "risk": "high",
+      "label": "System administration binaries",
+      "reason": "Admin tools installed by the OS."
+    },
+    "/usr/lib": {
+      "risk": "high",
+      "label": "System libraries",
+      "reason": "Shared libraries required by installed software."
+    },
+    "/usr/local": {
+      "risk": "medium",
+      "label": "Locally installed software",
+      "reason": "Software installed outside the package manager. Safer than /usr, but changes affect all users."
+    },
+    "/etc": {
+      "risk": "high",
+      "label": "System configuration files",
+      "reason": "Every daemon, service, and system setting is configured here. Mistakes can break networking, authentication, or boot."
+    },
+    "/etc/passwd": {
+      "risk": "high",
+      "label": "User account database",
+      "reason": "Corrupting this file can lock all users out of the system."
+    },
+    "/etc/shadow": {
+      "risk": "high",
+      "label": "Hashed passwords",
+      "reason": "Contains password hashes for all accounts. Root-only access."
+    },
+    "/etc/sudoers": {
+      "risk": "high",
+      "label": "sudo permissions",
+      "reason": "Controls who can run commands as root. Syntax errors lock out sudo entirely."
+    },
+    "/etc/ssh": {
+      "risk": "high",
+      "label": "SSH configuration",
+      "reason": "Host keys and daemon config. Changes here affect remote access security."
+    },
+    "/boot": {
+      "risk": "high",
+      "label": "Boot files",
+      "reason": "Kernel, initrd, and bootloader config. Corruption here makes the system unbootable."
+    },
+    "/dev": {
+      "risk": "high",
+      "label": "Device files",
+      "reason": "Writing to device files can corrupt disks or cause data loss."
+    },
+    "/proc": {
+      "risk": "medium",
+      "label": "Process and kernel information (virtual)",
+      "reason": "Virtual filesystem exposing kernel state. Safe to read, some writes change kernel parameters."
+    },
+    "/sys": {
+      "risk": "high",
+      "label": "Kernel and hardware interface (virtual)",
+      "reason": "Writing to /sys entries can change hardware behavior or crash the system."
+    },
+    "/lib": {
+      "risk": "high",
+      "label": "Essential shared libraries",
+      "reason": "Libraries required by /bin and /sbin. Removal prevents the system from booting."
+    },
+    "/lib64": {
+      "risk": "high",
+      "label": "64-bit essential shared libraries",
+      "reason": "Same as /lib but for 64-bit binaries."
+    },
+    "/root": {
+      "risk": "medium",
+      "label": "Root user's home directory",
+      "reason": "The superuser's home. Requires root access. Changes affect system-level configurations."
+    },
+    "/var": {
+      "risk": "medium",
+      "label": "Variable data",
+      "reason": "Logs, spools, caches, and databases. Safe to read; be careful deleting — some apps depend on this data."
+    },
+    "/var/log": {
+      "risk": "medium",
+      "label": "System logs",
+      "reason": "Deleting logs removes your audit trail. Writing to log files can confuse monitoring tools."
+    },
+    "/tmp": {
+      "risk": "low",
+      "label": "Temporary files",
+      "reason": "Cleared on reboot. Safe for scratch work, but do not store anything important here."
+    },
+    "/opt": {
+      "risk": "low",
+      "label": "Optional/third-party software",
+      "reason": "Common install location for non-packaged software. Changes here affect all users."
+    },
+    "/mnt": {
+      "risk": "medium",
+      "label": "Temporary mount point",
+      "reason": "Used to manually mount external drives or network shares."
+    },
+    "/media": {
+      "risk": "medium",
+      "label": "Auto-mounted removable media",
+      "reason": "USB drives, CD-ROMs. Modifying files here affects the mounted media."
+    },
+    "/snap": {
+      "risk": "medium",
+      "label": "Snap package mount points",
+      "reason": "Managed by snapd. Modifications may be overwritten by the package manager."
+    }
+  }
+}

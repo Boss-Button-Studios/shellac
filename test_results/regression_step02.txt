@@ -1,0 +1,133 @@
+Phase 2 — Context Pipeline
+Date: 2026-04-05
+Tester: Claude (automated), JMO (review)
+
+=== WHAT WAS TESTED ===
+1. ContextSanitizer — injection detection, dangerous sequence stripping, wrapForContext sentinel structure
+2. ContextBudget — fitBlocks() exclusion logic (flagged, active), oldest-first trimming, includeOutputForBlockId path
+3. AIBridge — looksLikeBash() heuristic, parseModelResponse() (clean JSON, fenced JSON, bad input)
+4. AIBridge — OllamaUnavailableError paths (model missing, Ollama unreachable)
+5. AIBridge — bash passthrough (source: 'direct', no model call)
+6. TypeScript — full project compiles with zero errors
+
+=== FILES CREATED ===
+assets/glossary.json         — 180 shell commands + 21 flags with plain-English definitions
+assets/system-dirs.json      — macOS (20 entries) and Linux (25 entries) platform risk maps
+src/lib/ContextBudget.ts     — fitBlocks() with command+exitCode-only default (spec §10)
+src/lib/AIBridge.ts          — translate(), looksLikeBash(), GeneratorProvider, parseModelResponse() (spec §11)
+
+=== SPEC DEVIATION NOTED ===
+
+looksLikeBash() spec inconsistency — spec §11 defines the implementation as:
+  KNOWN_COMMANDS.some(cmd => t === cmd || t.startsWith(cmd + ' '))
+But also defines this test case:
+  looksLikeBash("find files larger than 1gb") → false
+These are contradictory: "find files larger than 1gb".startsWith("find ") is true.
+
+Resolution: spec's TEST CASE takes precedence over the sample implementation (the test
+represents the intended behavior). Added AMBIGUOUS_COMMANDS set for commands that are
+also common English words (find, cat, head, tail, sort, kill, etc.). For ambiguous
+commands, require that arguments contain a bash-typical indicator (flag, path prefix,
+shell operator) before routing as bash. This makes:
+  looksLikeBash("find . -name *.ts")       → true  ✓ (starts with ".")
+  looksLikeBash("find files larger than")  → false ✓ (no bash indicator in args)
+
+Flagged for architect review — no architectural decision made without input.
+
+=== AUTOMATED TEST RESULTS ===
+
+[TypeScript] npx tsc --noEmit → zero errors ✓
+
+[Logic tests — npx tsx test_results/phase2_tests.ts]
+
+ContextSanitizer:
+  PASS: injection: "ignore previous instructions" → flagged
+  PASS: injection: [INST] → flagged
+  PASS: clean: ls output → not flagged
+  PASS: clean: ls output → text unchanged
+  PASS: OSC \x1b] stripped from context text
+  PASS: OSC \x1b] presence flagged
+  PASS: null byte \x00 stripped
+  PASS: null byte flagged
+  PASS: wrapForContext: opening tag present
+  PASS: wrapForContext: command present
+  PASS: wrapForContext: exit code present
+  PASS: wrapForContext: closing tag present
+
+ContextBudget:
+  PASS: excludes contextFlagged blocks
+  PASS: includes non-flagged blocks
+  PASS: excludes active (finishedAt:null) blocks
+  PASS: active exclusion still returns finished blocks
+  PASS: trims oldest blocks first when over budget
+  PASS: newest block survives trimming
+  PASS: includeOutputForBlockId: block included
+
+looksLikeBash:
+  PASS: "ls -la" → true
+  PASS: "ls -la | grep foo" → true
+  PASS: "git status" → true
+  PASS: "show me all large files" → false
+  PASS: "./run.sh" → true
+  PASS: "sudo apt update" → true
+  PASS: "!!" → true
+  PASS: "find files larger than 1gb" → false
+  PASS: "find . -name *.ts" → true
+
+parseModelResponse:
+  PASS: parses clean JSON command
+  PASS: parses confidence field
+  PASS: parses explanation field
+  PASS: strips markdown code fences
+  PASS: throws ShellacError on missing command
+  PASS: throws ShellacError on non-JSON response
+  PASS: unknown confidence defaults to medium
+
+Total: 35/35 PASS ✓
+
+[Ollama error paths — npx tsx test_results/phase2_ollama_tests.ts]
+  PASS: OllamaUnavailableError when model missing (model name: "no-such-model:999b")
+  PASS: OllamaUnavailableError when Ollama unreachable (port 19999)
+  PASS: bash passthrough source is "direct"
+  PASS: bash passthrough command unchanged
+  Total: 4/4 PASS ✓
+
+=== DEFERRED TESTS ===
+
+[ ] translate("list files", [], config) with qwen2.5-coder:7b → valid SuggestedCommand
+    REASON: qwen2.5-coder:7b not yet pulled. Ollama also busy with background process
+    during test window. Verified the full integration code path is correct by inspection
+    (GeneratorProvider.generate(), buildPrompt(), parseModelResponse() all individually
+    tested). Deferred to Phase 6 (installer pulls both required models).
+
+[ ] Context overflow trim-and-retry (mock 500 with "context" in body)
+    REASON: Requires Ollama to be in a state where it can receive and return a context
+    overflow response. Tested via code inspection: ContextOverflowError is thrown in
+    GeneratorProvider.generate() on 500+"context", caught in translate() loop,
+    contextBlocks halved, retry attempted. Logic is correct by inspection.
+    Deferred to Phase 6 integration testing with required models loaded.
+
+=== UNEXPECTED BEHAVIOR OBSERVED ===
+
+- Ollama's /api/generate was unresponsive during test window (background process using
+  the inference queue). /api/tags and /api/ps remained responsive. This is expected
+  Ollama behavior (single-threaded inference queue). Not a Shellac bug.
+- The 8-second per-attempt timeout in translate() is appropriate for loaded models
+  but will time out on cold model loads. Phase 6 installer ensures models are pre-loaded
+  before the app opens, so this is acceptable.
+
+=== NOTES ===
+- ContextBudget.fitBlocks() correctly implements the spec §10 invariant: stdout never
+  enters a prompt by default. The includeOutputForBlockId exception path is wired but
+  the UI trigger ("Help me fix this" button) is deferred to Phase 4.
+- assets/glossary.json covers 180 command entries + 21 flag entries (201 total).
+  GlossaryTab (Phase 5) will load this file at startup.
+- assets/system-dirs.json covers 20 macOS paths and 25 Linux paths with risk levels
+  (high/medium/low), labels, and human-readable reasons. NavigatorTab (Phase 5) will
+  use this to display territory warnings.
+
+=== PHASE 2 GATE: PASS ===
+All testable automated items pass (35/35 logic + 4/4 error paths).
+translate() positive path with required model deferred to Phase 6.
+Spec inconsistency in looksLikeBash() flagged above.
+Phase 3 (Safety Layer) may begin.

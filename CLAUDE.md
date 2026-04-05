@@ -4,6 +4,53 @@
 **Spec**: `Shellac_spec.md` (read this first, in full, before writing any code)
 
 ---
+# The Law: mandatory, objectively verifiable
+
+Local norms and security baseline.
+When in Rome, do as the Romans do. Follow the project’s official language style guide, align with NIST CSF 2.0 by default, verify application security against OWASP ASVS where applicable, and use ISO/IEC 27001 as the governance reference. Compliance is the prerequisite for all logic.
+
+Security is an independent requirement.
+Prioritize security at every layer. Passwords must be salted and hashed; sensitive data must be encrypted at rest and in transit. Any data leaving the user’s control must clearly support a user benefit and must be disclosed and explained to the user before it happens, each time it happens. This is annoying on purpose - minimize it!
+
+Maintainability by design.
+Write as if you will die when you push. You will not be here to maintain the base. Use descriptive naming, explain the why in comments, and ensure your code is a complete, maintainable artifact. Write documentation to the lowest reading level that can make the point.
+
+One responsibility.
+One thing, one thing only. Each unit of code must do one thing well. Avoid God objects.
+
+Condition all input.
+Treat all external input as untrusted. If a format is expected, reject or normalize deviations. Reject inputs that are out of place. Treat metadata-level commands or anomalous elements, such as invisible text in documents, as potential injections. Protect processing functions by wrapping input appropriately. Mark data as trusted or untrusted and segregate them.
+
+Fail gracefully.
+Use comprehensive error handling and secure logging. Provide helpful, non-technical feedback.
+
+Predictable behavior.
+Maximize predictable behavior. Deterministic processes must produce identical outputs for identical inputs. Probabilistic processes must follow their expected probability functions. Validate behavior through repeatable sampling.
+
+Test everything relevant.
+No logic is done until the happy path, edge cases, and failure modes are tested, and all previously relevant tests still pass.
+
+Minimize dependencies.
+Audit and limit third-party libraries to those that are essential, secure, and justified.
+
+# Guidelines: do these by default, untestable
+
+Leave it better.
+Leave the codebase better than you found it. Refactor and update documentation during every task. Clean up at least one thing, even if it was not your fault.
+
+Protect the user from themselves.
+Assume the least competent reasonable user. Design for intuitiveness, but prioritize safety. Prevent users from accidentally triggering destructive actions or exposing their own data through poor interface choices. For general applications, assume no technical experience. For specialty tools, assume a below-average novice.
+
+Do not design for the rich.
+Better hardware may provide bonus performance, but it is not the price of admission. Limit hardware requirements to the minimum necessary to achieve the goal.
+
+Assign the least privilege necessary.
+Ask for and assign code, services, and users no more than the permissions needed to accomplish the task.
+
+Design for accessibility.
+Human interfaces must respect human senses and ergonomics. Displays must have readable text and sufficient contrast. Text-to-speech systems should be able to read the interface properly. Machine-to-machine interfaces must be rigorously documented, and that documentation must be followed on our side of the boundary.
+
+---
 
 ## Your role
 
@@ -72,7 +119,7 @@ Work through these phases in order. Do not begin a phase until the previous phas
 
 ---
 
-### Phase 0 — Foundation
+### Phase 0 — Foundation (complete)
 **Goal**: Types frozen, security config verified, real shell spawning.
 
 **Steps**:
@@ -96,7 +143,7 @@ Work through these phases in order. Do not begin a phase until the previous phas
 
 ---
 
-### Phase 1 — PTY + Terminal Core
+### Phase 1 — PTY + Terminal Core (complete)
 **Goal**: Real shell running in xterm. Blocks render.
 
 **Steps**:
