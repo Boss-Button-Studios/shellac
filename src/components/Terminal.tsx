@@ -1,28 +1,63 @@
-import { useEffect, useRef, useCallback } from 'react'
+// Terminal — spec §17 Terminal (root)
+//
+// Root layout:
+//   [Sidebar] | [block list + xterm + SuggestionCard? + input area]
+//
+// Input area states (mutually exclusive):
+//   1. Command running (activeBlockId !== null) → Stop button only
+//   2. Idle, last exit = 0 or no blocks       → NLBar only
+//   3. Idle, last exit ≠ 0                    → NLBar + Help button
+//
+// Help button disappears the moment the user types in the NLBar.
+// It calls explainResult() with stdout included (the only path where stdout
+// enters a model context — requires explicit user action, spec §13).
+
+import { useEffect, useRef, useCallback, useState } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { useBlockStore } from '../lib/BlockStore.ts'
+import { explainResult } from '../lib/CommandExplainer.ts'
 import TerminalBlock from './TerminalBlock.tsx'
+import NLBar from './NLBar.tsx'
+import SuggestionCard from './SuggestionCard.tsx'
+import type { AppConfig, Block, CommandResult } from '../types/index.ts'
+import { DEFAULT_CONFIG } from '../types/index.ts'
 
 const isMac = navigator.platform.startsWith('Mac')
 
 export default function Terminal() {
-  const xtermRef    = useRef<XTerm | null>(null)
-  const fitAddonRef = useRef<FitAddon | null>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
+  const xtermRef      = useRef<XTerm | null>(null)
+  const fitAddonRef   = useRef<FitAddon | null>(null)
+  const containerRef  = useRef<HTMLDivElement>(null)
+  const blockListRef  = useRef<HTMLDivElement>(null)
 
-  const blocks        = useBlockStore(s => s.blocks)
-  const activeBlockId = useBlockStore(s => s.activeBlockId)
-  const appendOutput  = useBlockStore(s => s.appendOutput)
-  const finishBlock   = useBlockStore(s => s.finishBlock)
-  const updateCwd     = useBlockStore(s => s.updateCwd)
+  // Config — fetched from main process once on mount
+  const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG)
 
-  // ── xterm init ────────────────────────────────────────────────────────────
+  // Sidebar explain state — populated by Help button and post-run explanations
+  const [sidebarExplain, setSidebarExplain]   = useState<CommandResult | null>(null)
+  const [sidebarLoading, setSidebarLoading]   = useState(false)
+
+  const blocks         = useBlockStore(s => s.blocks)
+  const activeBlockId  = useBlockStore(s => s.activeBlockId)
+  const suggestion     = useBlockStore(s => s.suggestion)
+  const appendOutput   = useBlockStore(s => s.appendOutput)
+  const finishBlock    = useBlockStore(s => s.finishBlock)
+  const updateCwd      = useBlockStore(s => s.updateCwd)
+  const startBlock     = useBlockStore(s => s.startBlock)
+  const setSuggestion  = useBlockStore(s => s.setSuggestion)
+
+  // ── Load config ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    window.electronAPI.configGet().then(setConfig).catch(() => {/* use default */})
+  }, [])
+
+  // ── xterm init ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const term = new XTerm({
       fontFamily:       "'SF Mono', 'JetBrains Mono', Menlo, monospace",
-      fontSize:         14,
+      fontSize:         config.fontSize,
       cursorBlink:      true,
       allowProposedApi: false,
       theme: {
@@ -52,17 +87,15 @@ export default function Terminal() {
     xtermRef.current    = term
     fitAddonRef.current = fitAddon
 
-    // ── copyOnSelect — xterm v6 removed the option; implement via event ─────
-    // clipboard routed through main process (navigator.clipboard blocked in sandbox)
+    // copyOnSelect — xterm v6 removed the option; implement via selection event
     term.onSelectionChange(() => {
       const sel = term.getSelection()
       if (sel) window.electronAPI.clipboardWrite(sel)
     })
 
-    // ── PTY data in ─────────────────────────────────────────────────────────
+    // PTY data → xterm + block output accumulator
     const offData = window.electronAPI.onPtyData(data => {
       term.write(data)
-      // Route to active block if one is running
       const { activeBlockId: id } = useBlockStore.getState()
       if (id) appendOutput(id, data)
     })
@@ -75,14 +108,12 @@ export default function Terminal() {
 
     const offCwd = window.electronAPI.onPtyCwd(path => {
       updateCwd(path)
-      // A CWD update signals a new prompt — finish the active block if any
+      // CWD update signals prompt returned — finish the active block
       const { activeBlockId: id } = useBlockStore.getState()
       if (id) finishBlock(id, 0)
     })
 
-    // ── clipboard shortcuts — window-level listener fires before xterm ──────
-    // Using window.addEventListener instead of term.onKey because xterm can
-    // suppress modifier combos before onKey fires.
+    // Clipboard shortcuts (window-level, fires before xterm intercepts)
     const handleKeyDown = (e: KeyboardEvent) => {
       const isCopy = isMac
         ? (e.metaKey && !e.shiftKey && e.key === 'c')
@@ -104,15 +135,13 @@ export default function Terminal() {
     }
     window.addEventListener('keydown', handleKeyDown)
 
-    // ── keyboard: data out ───────────────────────────────────────────────────
+    // Keyboard: data out (Ctrl+C swallowed — Stop button is the only SIGINT path)
     term.onKey(({ key }) => {
-      // Ctrl+C (\x03) is explicitly swallowed — Stop button is the only SIGINT path
       if (key === '\x03') return
-      // All other keys go straight to the PTY
       window.electronAPI.ptyWrite(key)
     })
 
-    // ── resize ───────────────────────────────────────────────────────────────
+    // Auto-resize via ResizeObserver
     const ro = new ResizeObserver(() => {
       fitAddon.fit()
       window.electronAPI.ptyResize(term.cols, term.rows)
@@ -130,42 +159,131 @@ export default function Terminal() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ── Stop button handler ───────────────────────────────────────────────────
+  // ── Scroll block list to bottom on new blocks ──────────────────────────────
+  useEffect(() => {
+    const el = blockListRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [blocks.length])
+
+  // ── Stop button ───────────────────────────────────────────────────────────
   const handleStop = useCallback(() => {
     window.electronAPI.ptyWrite('\x03')
   }, [])
 
-  // ── render ────────────────────────────────────────────────────────────────
-  const isRunning = activeBlockId !== null
+  // ── Focus xterm (called by NLBar on Escape) ────────────────────────────────
+  const focusXterm = useCallback(() => {
+    xtermRef.current?.focus()
+  }, [])
+
+  // ── SuggestionCard confirm ─────────────────────────────────────────────────
+  // Execute the confirmed command: start a block, write to PTY, clear suggestion.
+  const handleConfirm = useCallback((command: string, nlQuery?: string) => {
+    setSuggestion(null)
+    startBlock(command, suggestion?.source === 'direct' ? 'direct' : 'nl', nlQuery)
+    // Append '\r' — passes through PTY_WRITE handler (strips after \n, not \r)
+    window.electronAPI.ptyWrite(command + '\r')
+    focusXterm()
+  }, [suggestion, startBlock, setSuggestion, focusXterm])
+
+  // ── SuggestionCard dismiss ────────────────────────────────────────────────
+  const handleDismiss = useCallback(() => {
+    setSuggestion(null)
+    focusXterm()
+  }, [setSuggestion, focusXterm])
+
+  // ── Help button ────────────────────────────────────────────────────────────
+  // Called by TerminalBlock when user clicks "Help me fix this".
+  // Only path where stdout enters a model context (spec §13).
+  const handleHelp = useCallback(async (block: Block) => {
+    setSidebarLoading(true)
+    setSidebarExplain(null)
+    try {
+      const result = await explainResult(
+        block.command,
+        block.output,
+        block.exitCode ?? 1,
+        config,
+        true,  // includeOutput — user explicitly requested this
+      )
+      setSidebarExplain(result)
+    } catch {
+      setSidebarExplain({
+        summary:     'Unable to explain — Ollama may be unavailable.',
+        exitMeaning: '',
+        nextSteps:   ['Run: ollama serve', 'Then click Help me fix this again'],
+      })
+    } finally {
+      setSidebarLoading(false)
+    }
+  }, [config])
+
+  // ── Input area state ───────────────────────────────────────────────────────
+  const isRunning    = activeBlockId !== null
+  const finishedBlocks = blocks.filter(b => b.finishedAt !== null)
+  const lastBlock    = finishedBlocks[finishedBlocks.length - 1] ?? null
+  const lastFailed   = lastBlock !== null && lastBlock.exitCode !== 0
 
   return (
     <div style={styles.root}>
-      {/* Sidebar placeholder — Phase 5 */}
+      {/* Sidebar — Phase 5 full implementation; Phase 4 shows explain result */}
       <div style={styles.sidebar}>
-        <div style={styles.sidebarPlaceholder}>Sidebar — Phase 5</div>
+        <SidebarPlaceholder
+          loading={sidebarLoading}
+          result={sidebarExplain}
+        />
       </div>
 
       {/* Main terminal column */}
       <div style={styles.main}>
         {/* Block list */}
-        <div style={styles.blockList}>
-          {blocks.filter(b => b.finishedAt !== null).map(block => (
-            <TerminalBlock key={block.id} block={block} />
+        <div ref={blockListRef} style={styles.blockList}>
+          {finishedBlocks.map(block => (
+            <TerminalBlock
+              key={block.id}
+              block={block}
+              onHelp={handleHelp}
+            />
           ))}
         </div>
 
-        {/* xterm live area */}
+        {/* xterm live surface */}
         <div ref={containerRef} style={styles.xtermContainer} />
 
-        {/* Input area — Stop button while running, NLBar placeholder otherwise */}
+        {/* SuggestionCard — shown above input area when a suggestion is pending */}
+        {suggestion && !isRunning && (
+          <div style={styles.suggestionArea}>
+            <SuggestionCard
+              suggestion={suggestion}
+              config={config}
+              onConfirm={handleConfirm}
+              onDismiss={handleDismiss}
+            />
+          </div>
+        )}
+
+        {/* Input area */}
         <div style={styles.inputArea}>
           {isRunning ? (
             <button onClick={handleStop} style={styles.stopButton}>
               ■ Stop
             </button>
-          ) : (
-            <div style={styles.nlbarPlaceholder}>
-              NLBar — Phase 4
+          ) : suggestion ? null : (
+            /* NLBar + optional Help button */
+            <div style={styles.inputRow}>
+              <NLBar
+                config={config}
+                onFocusXterm={focusXterm}
+                disabled={isRunning}
+              />
+              {lastFailed && (
+                <button
+                  style={styles.helpButton}
+                  onClick={() => handleHelp(lastBlock!)}
+                  title="Explain what went wrong"
+                >
+                  Help me fix this
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -174,41 +292,118 @@ export default function Terminal() {
   )
 }
 
-// ── Inline styles (design tokens applied in Phase 6) ─────────────────────────
+// ── SidebarPlaceholder ────────────────────────────────────────────────────────
+// Phase 5 will replace this with the full Sidebar component.
+// For Phase 4 MHTP, it shows the explain result when the Help button is clicked.
+
+function SidebarPlaceholder({
+  loading,
+  result,
+}: {
+  loading: boolean
+  result:  CommandResult | null
+}) {
+  if (loading) {
+    return (
+      <div style={sidebarStyles.panel}>
+        <div style={sidebarStyles.tabBar}>
+          <span style={sidebarStyles.activeTab}>Explain</span>
+        </div>
+        <div style={sidebarStyles.content}>
+          <span style={sidebarStyles.muted}>Analyzing…</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (result) {
+    return (
+      <div style={sidebarStyles.panel}>
+        <div style={sidebarStyles.tabBar}>
+          <span style={sidebarStyles.activeTab}>Explain</span>
+        </div>
+        <div style={sidebarStyles.content}>
+          <div style={sidebarStyles.summary}>{result.summary}</div>
+          {result.exitMeaning && (
+            <div style={sidebarStyles.exitMeaning}>{result.exitMeaning}</div>
+          )}
+          {result.nextSteps.length > 0 && (
+            <div style={sidebarStyles.nextStepsSection}>
+              <div style={sidebarStyles.sectionLabel}>Next steps</div>
+              <ol style={sidebarStyles.nextStepsList}>
+                {result.nextSteps.map((s, i) => (
+                  <li key={i} style={sidebarStyles.nextStep}>{s}</li>
+                ))}
+              </ol>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={sidebarStyles.panel}>
+      <div style={sidebarStyles.tabBar}>
+        <span style={sidebarStyles.activeTab}>Explain</span>
+        <span style={sidebarStyles.inactiveTab}>Navigate</span>
+        <span style={sidebarStyles.inactiveTab}>Glossary</span>
+        <span style={sidebarStyles.inactiveTab}>Settings</span>
+      </div>
+      <div style={sidebarStyles.content}>
+        <div style={sidebarStyles.welcome}>
+          <div style={sidebarStyles.welcomeTitle}>Welcome to Shellac</div>
+          <div style={sidebarStyles.welcomeText}>
+            Type a command or describe what you want to do. Shellac will
+            translate your words into shell commands and explain what they do
+            before anything runs.
+          </div>
+          <div style={sidebarStyles.welcomeText}>
+            Sidebar tabs will be available in a future update.
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
 const styles: Record<string, React.CSSProperties> = {
   root: {
-    display:   'flex',
-    width:     '100%',
-    height:    '100%',
-    overflow:  'hidden',
+    display:    'flex',
+    width:      '100%',
+    height:     '100%',
+    overflow:   'hidden',
     background: '#1C1814',
   },
   sidebar: {
-    width:      '300px',
-    flexShrink: 0,
+    width:       '300px',
+    flexShrink:  0,
     borderRight: '1px solid rgba(200,170,140,0.09)',
     background:  '#201C18',
-  },
-  sidebarPlaceholder: {
-    padding:  '1rem',
-    color:    '#5A504A',
-    fontSize: '12px',
+    overflow:    'hidden',
   },
   main: {
-    flex:      1,
-    display:   'flex',
+    flex:          1,
+    display:       'flex',
     flexDirection: 'column',
-    overflow:  'hidden',
+    overflow:      'hidden',
   },
   blockList: {
-    flex:       1,
-    overflowY:  'auto',
-    padding:    '0.5rem 0',
+    flex:      1,
+    overflowY: 'auto',
+    padding:   '0.5rem 0',
   },
   xtermContainer: {
     flexShrink: 0,
     height:     '240px',
     padding:    '4px',
+  },
+  suggestionArea: {
+    flexShrink: 0,
+    padding:    '0 12px',
+    maxHeight:  '50vh',
+    overflowY:  'auto',
   },
   inputArea: {
     flexShrink: 0,
@@ -217,6 +412,12 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight:  '48px',
     display:    'flex',
     alignItems: 'center',
+  },
+  inputRow: {
+    display:    'flex',
+    alignItems: 'center',
+    gap:        '8px',
+    flex:       1,
   },
   stopButton: {
     background:    '#C46060',
@@ -228,9 +429,114 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight:    600,
     cursor:        'pointer',
     letterSpacing: '0.02em',
+    fontFamily:    '-apple-system, system-ui, sans-serif',
   },
-  nlbarPlaceholder: {
-    color:    '#5A504A',
-    fontSize: '12px',
+  helpButton: {
+    background:   'transparent',
+    border:       '1px solid rgba(200,170,140,0.14)',
+    borderRadius: '5px',
+    color:        '#8A7D70',
+    fontFamily:   '-apple-system, system-ui, sans-serif',
+    fontSize:     '11px',
+    padding:      '4px 10px',
+    cursor:       'pointer',
+    flexShrink:   0,
+    whiteSpace:   'nowrap',
+  },
+}
+
+const sidebarStyles: Record<string, React.CSSProperties> = {
+  panel: {
+    height:        '100%',
+    display:       'flex',
+    flexDirection: 'column',
+    overflow:      'hidden',
+  },
+  tabBar: {
+    display:    'flex',
+    gap:        '2px',
+    padding:    '8px 8px 0',
+    borderBottom: '1px solid rgba(200,170,140,0.09)',
+    flexShrink: 0,
+  },
+  activeTab: {
+    color:        '#E8DDD0',
+    fontFamily:   '-apple-system, system-ui, sans-serif',
+    fontSize:     '11px',
+    fontWeight:   600,
+    padding:      '4px 8px 6px',
+    borderBottom: '2px solid #C4844A',
+    marginBottom: '-1px',
+  },
+  inactiveTab: {
+    color:      '#5A504A',
+    fontFamily: '-apple-system, system-ui, sans-serif',
+    fontSize:   '11px',
+    padding:    '4px 8px 6px',
+    cursor:     'not-allowed',
+  },
+  content: {
+    flex:      1,
+    overflowY: 'auto',
+    padding:   '12px',
+  },
+  muted: {
+    color:      '#5A504A',
+    fontFamily: '-apple-system, system-ui, sans-serif',
+    fontSize:   '12px',
+  },
+  summary: {
+    color:        '#C8BDB0',
+    fontFamily:   '-apple-system, system-ui, sans-serif',
+    fontSize:     '13px',
+    lineHeight:   1.5,
+    marginBottom: '8px',
+  },
+  exitMeaning: {
+    color:        '#8A7D70',
+    fontFamily:   '-apple-system, system-ui, sans-serif',
+    fontSize:     '12px',
+    marginBottom: '12px',
+    fontStyle:    'italic',
+  },
+  nextStepsSection: {
+    marginTop: '8px',
+  },
+  sectionLabel: {
+    color:        '#5A504A',
+    fontFamily:   '-apple-system, system-ui, sans-serif',
+    fontSize:     '10px',
+    fontWeight:   600,
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase' as const,
+    marginBottom: '6px',
+  },
+  nextStepsList: {
+    margin:      0,
+    paddingLeft: '16px',
+    color:       '#8A7D70',
+    fontFamily:  '-apple-system, system-ui, sans-serif',
+    fontSize:    '12px',
+    lineHeight:  1.6,
+  },
+  nextStep: {
+    marginBottom: '4px',
+  },
+  welcome: {
+    paddingTop: '8px',
+  },
+  welcomeTitle: {
+    color:        '#C8BDB0',
+    fontFamily:   '-apple-system, system-ui, sans-serif',
+    fontSize:     '13px',
+    fontWeight:   600,
+    marginBottom: '10px',
+  },
+  welcomeText: {
+    color:        '#5A504A',
+    fontFamily:   '-apple-system, system-ui, sans-serif',
+    fontSize:     '12px',
+    lineHeight:   1.6,
+    marginBottom: '8px',
   },
 }

@@ -1,0 +1,92 @@
+Phase 4 — UI Integration (MHTP)
+Date: 2026-04-07
+Tester: Claude (automated TypeScript check); Jarrod (interactive)
+
+=== WHAT WAS TESTED ===
+1. TypeScript — full project compiles with zero errors
+2. NLBar routing logic (looksLikeBash → direct, else → translate)
+3. SuggestionCard validation/explanation parallel execution
+4. TerminalBlock Help button wiring
+5. Terminal composition, input area states, Help flow
+
+=== FILES CREATED / MODIFIED ===
+src/components/NLBar.tsx         — input bar, ghost text, routing, error recovery (spec §17)
+src/components/SuggestionCard.tsx — validation display, lazy explanation, confusable highlight (spec §17)
+src/components/Terminal.tsx      — full composition, sidebar placeholder, Help handler (spec §17)
+src/components/TerminalBlock.tsx — Help button wired to onHelp callback (spec §13, §17)
+
+=== AUTOMATED RESULTS ===
+
+[TypeScript] npx tsc --noEmit → zero errors ✓
+
+=== INTERACTIVE TEST CHECKLIST ===
+(To be completed by Jarrod during MHTP playtest)
+
+End-to-end flows:
+[ ] Type "list files" in NLBar → suggestion appears with ls variant, explanation loads
+[ ] Type `git status` in NLBar → looksLikeBash routes directly, `direct` badge shown
+[ ] Confirm a safe suggestion → command executes in xterm, block created
+[ ] Dismiss a suggestion → NLBar clears, focus returns to xterm
+[ ] Escape during loading → in-flight request cancels, loading state clears
+[ ] Cmd+K / Ctrl+K → focuses NLBar from anywhere
+[ ] Type `rm -rf /` in NLBar → looksLikeBash routes it, validator shows block state, Run disabled
+
+Validation UI:
+[ ] Safe command → normal SuggestionCard border
+[ ] Warn command → amber border, warning message, Run still enabled
+[ ] Block command → red border, Run button disabled, reason shown
+[ ] Edit a blocked command to safe → re-validates on blur, block state clears
+
+Error recovery:
+[ ] Stop Ollama (ollama stop), submit NL query → recovery message with ollama serve shown
+[ ] Restart Ollama, submit same query → works normally
+
+"Help me fix this":
+[ ] Run a command that fails (cat nonexistent.txt) → button appears on block
+[ ] Click button → explainResult() called with stdout, explanation appears in sidebar Explain tab
+
+=== IMPLEMENTATION NOTES ===
+
+NLBar.tsx:
+- Ghost text uses a layered approach: transparent span for the typed prefix, dim span
+  for the synopsis suffix. Only shown when the hint starts with what the user has typed.
+- OllamaUnavailableError recovery panel preserves the query; each command line is a
+  copyable button.
+- nlQuery is forwarded through setSuggestion so the Block can be labeled correctly.
+
+SuggestionCard.tsx:
+- Promise.allSettled([validateCommand, explainCommand]) runs on mount.
+- Re-validation on blur fires only when editedSinceValidate is true AND the previous
+  result was warn or block — avoids unnecessary model calls.
+- Confusable highlight splits the command string into ASCII/non-ASCII segments and
+  renders non-ASCII chars in amber with a wavy underline.
+- "Run anyway" label: shown when explanation.reversible === false AND verdict is not block.
+- validateCommand fail-open: if the validator throws, the card shows 'warn' rather than
+  blocking (spec §12).
+
+Terminal.tsx:
+- Config fetched from main process once on mount; DEFAULT_CONFIG used as initial state
+  so components render immediately without waiting.
+- Sidebar is a Phase 4 placeholder that shows the Explain result. Full sidebar in Phase 5.
+- handleConfirm appends '\r' (not '\n') before ptyWrite — PTY_WRITE strips after '\n',
+  and '\r' is the PTY's Enter signal.
+- The Help button in the input area and the Help button on TerminalBlock both route
+  through handleHelp(), which calls explainResult(includeOutput: true).
+
+=== KNOWN GAPS (acceptable at MHTP) ===
+- Sidebar is a placeholder: Navigate, Glossary, Settings tabs are non-functional
+  (labeled but disabled). Phase 5 delivers the full sidebar.
+- No command history in NLBar (deferred to v2 per spec §17).
+- Config persistence changes (font size, theme) not reflected in xterm until restart.
+  Phase 6 wires config IPC updates to live xterm options.
+- The ghost text only shows the suffix when the synopsis starts with the typed value.
+  Edge case: user types "find . -name" → synopsis "find [path] [expression]" diverges
+  after "find ", so no suffix shown. The spec example shows this case as "still shown"
+  which requires a different rendering approach. The current implementation correctly
+  shows ghost text for the common case (typing the command name) and is silent when
+  the user has typed beyond the synopsis. Acceptable for MHTP.
+
+=== PHASE 4 GATE ===
+TypeScript: PASS (zero errors)
+Interactive: Pending Jarrod's playtest session
+Phase 4 is the MHTP gate — full interactive verification required before Phase 5.

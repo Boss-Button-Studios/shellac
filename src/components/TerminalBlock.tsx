@@ -2,16 +2,19 @@ import { useState, useMemo } from 'react'
 import AnsiToHtml from 'ansi-to-html'
 import type { Block } from '../types/index.ts'
 
+// ── Props ─────────────────────────────────────────────────────────────────────
+
 // ansi-to-html MUST be instantiated with escapeXML: true — non-negotiable (spec §3)
 const ansiConverter = new AnsiToHtml({ escapeXML: true })
 
 const OUTPUT_LINE_LIMIT = 100
 
 interface Props {
-  block: Block
+  block:   Block
+  onHelp?: (block: Block) => void  // called when "Help me fix this" is clicked
 }
 
-export default function TerminalBlock({ block }: Props) {
+export default function TerminalBlock({ block, onHelp }: Props) {
   const [expanded, setExpanded] = useState(false)
 
   const elapsed = block.finishedAt !== null
@@ -77,9 +80,13 @@ export default function TerminalBlock({ block }: Props) {
         </div>
       )}
 
-      {/* "Help me fix this" — stub, wired in Phase 4 */}
-      {block.exitCode !== null && block.exitCode !== 0 && (
-        <button style={styles.helpBtn} disabled>
+      {/* "Help me fix this" — visible on non-zero exit, calls explainResult with stdout */}
+      {block.exitCode !== null && block.exitCode !== 0 && onHelp && (
+        <button
+          style={styles.helpBtn}
+          onClick={() => onHelp(block)}
+          title="Explain what went wrong using command output"
+        >
           Help me fix this
         </button>
       )}
@@ -174,8 +181,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize:     '11px',
     padding:      '3px 8px',
     margin:       '4px 12px 6px',
-    cursor:       'not-allowed',
+    cursor:       'pointer',
     fontFamily:   '-apple-system, system-ui, sans-serif',
-    opacity:      0.6,
   },
 }
