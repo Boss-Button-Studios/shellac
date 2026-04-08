@@ -71,7 +71,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   ollamaBaseUrl:          'http://localhost:11434',
   maxContextTokens:       4000,
   maxOutputCharsPerBlock: 2000,
-  shell:                  process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash',
+  shell:                  typeof process !== 'undefined' && process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash',
   theme:                  'system',
   fontSize:               14,
   sidebarOpen:            true,
