@@ -119,8 +119,7 @@ export default function NLBar({ config, onFocusXterm, disabled }: Props) {
     }
   }, [handleSubmit, error, onFocusXterm])
 
-  // ── OllamaUnavailable recovery panel ──────────────────────────────────────
-  // Lines are each individually copyable via click (spec §16)
+  // ── Error panels ──────────────────────────────────────────────────────────
   if (error === 'ollama-unavailable') {
     return (
       <div style={styles.recovery}>
@@ -130,6 +129,21 @@ export default function NLBar({ config, onFocusXterm, disabled }: Props) {
         <div style={styles.recoveryHint}>
           Not installed? Run Shellac&apos;s installer again.
         </div>
+        <div style={styles.recoveryQuery}>
+          <span style={styles.recoveryQueryLabel}>Your query: </span>
+          <span style={styles.recoveryQueryText}>{value}</span>
+        </div>
+      </div>
+    )
+  }
+
+  // Generic model error — show the message so we can diagnose
+  if (error) {
+    return (
+      <div style={styles.recovery}>
+        <div style={styles.recoveryTitle}>Model error</div>
+        <div style={styles.recoveryError}>{error}</div>
+        <div style={styles.recoveryHint}>Press any key to retry.</div>
         <div style={styles.recoveryQuery}>
           <span style={styles.recoveryQueryLabel}>Your query: </span>
           <span style={styles.recoveryQueryText}>{value}</span>
@@ -288,6 +302,13 @@ const styles: Record<string, React.CSSProperties> = {
   copiedBadge: {
     color:   '#7A9E7E',
     marginLeft: '4px',
+  },
+  recoveryError: {
+    fontFamily:  "'SF Mono', 'JetBrains Mono', Menlo, monospace",
+    fontSize:    '11px',
+    color:       '#C46060',
+    marginBottom: '4px',
+    wordBreak:   'break-all' as const,
   },
   recoveryHint: {
     color:       '#5A504A',

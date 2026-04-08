@@ -188,8 +188,9 @@ class GeneratorProvider {
 
     if (!res.ok) {
       const text = await res.text()
-      // Ollama returns 500 with "context" in the body when the prompt is too long
-      if (text.toLowerCase().includes('context') || res.status === 500) {
+      // Ollama returns 500 with "context" in the body when the prompt is too long.
+      // Do NOT treat all 500s as context overflow — that hides real errors.
+      if (text.toLowerCase().includes('context')) {
         throw new ContextOverflowError(0, config.maxContextTokens)
       }
       throw new ShellacError(`Generator returned HTTP ${res.status}: ${text}`)
