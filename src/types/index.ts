@@ -66,7 +66,7 @@ export interface AppConfig {
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
-  generatorModel:         'qwen2.5-coder:7b',
+  generatorModel:         'qwen2.5-coder:1.5b',
   validatorModel:         'mistral:7b',
   ollamaBaseUrl:          'http://localhost:11434',
   maxContextTokens:       4000,
