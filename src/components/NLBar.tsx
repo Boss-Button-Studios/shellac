@@ -14,18 +14,20 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useBlockStore } from '../lib/BlockStore.ts'
 import { translate, looksLikeBash, COMMAND_HINTS } from '../lib/AIBridge.ts'
+import { staticAnalysis } from '../lib/CommandValidator.ts'
 import { OllamaUnavailableError } from '../types/index.ts'
 import type { AppConfig } from '../types/index.ts'
 
 const isMac = navigator.platform.startsWith('Mac')
 
 interface Props {
-  config:          AppConfig
-  onFocusXterm:    () => void  // called when Escape clears with nothing in flight
-  disabled?:       boolean
+  config:             AppConfig
+  onFocusXterm:       () => void   // called when Escape clears with nothing in flight
+  onDirectExecute:    (command: string) => void  // direct bash that passed static analysis
+  disabled?:          boolean
 }
 
-export default function NLBar({ config, onFocusXterm, disabled }: Props) {
+export default function NLBar({ config, onFocusXterm, onDirectExecute, disabled }: Props) {
   const [value,    setValue]    = useState('')
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState<string | null>(null)
@@ -70,7 +72,16 @@ export default function NLBar({ config, onFocusXterm, disabled }: Props) {
     setError(null)
 
     if (looksLikeBash(query)) {
-      // Bash path — no model call. Validator runs inside SuggestionCard.
+      // Bash path — run static analysis synchronously (free, no model call).
+      // Only show SuggestionCard if the command is warn or block.
+      // Clean commands execute immediately — no card, no friction.
+      const { verdict } = staticAnalysis(query, config.safetyLevel)
+      if (verdict === 'pass') {
+        setValue('')
+        onDirectExecute(query)
+        return
+      }
+      // warn or block — show card so user can see the reason and decide
       setSuggestion({ command: query, explanation: '', confidence: 'high', source: 'direct' })
       return
     }

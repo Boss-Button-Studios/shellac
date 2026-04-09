@@ -108,9 +108,16 @@ export default function Terminal() {
 
     const offCwd = window.electronAPI.onPtyCwd(path => {
       updateCwd(path)
-      // CWD update signals prompt returned — finish the active block
-      const { activeBlockId: id } = useBlockStore.getState()
-      if (id) finishBlock(id, 0)
+      // CWD update signals the prompt has returned. Finish the active block only
+      // if PTY_EXIT hasn't already done so with the real exit code.
+      // Use exit code 0 as a fallback (prompt returning implies success if we
+      // didn't get an explicit exit event).
+      const { activeBlockId: id, blocks } = useBlockStore.getState()
+      if (id) {
+        const block = blocks.find(b => b.id === id)
+        // Only finish here if the block doesn't already have an exit code
+        if (block && block.exitCode === null) finishBlock(id, 0)
+      }
     })
 
     // Clipboard shortcuts (window-level, fires before xterm intercepts)
@@ -175,12 +182,18 @@ export default function Terminal() {
     xtermRef.current?.focus()
   }, [])
 
+  // ── Direct execute (bash passthrough that passed static analysis) ────────────
+  // No SuggestionCard, no model call — fires immediately.
+  const handleDirectExecute = useCallback((command: string) => {
+    startBlock(command, 'direct')
+    window.electronAPI.ptyWrite(command + '\r')
+    focusXterm()
+  }, [startBlock, focusXterm])
+
   // ── SuggestionCard confirm ─────────────────────────────────────────────────
-  // Execute the confirmed command: start a block, write to PTY, clear suggestion.
   const handleConfirm = useCallback((command: string, nlQuery?: string) => {
     setSuggestion(null)
     startBlock(command, suggestion?.source === 'direct' ? 'direct' : 'nl', nlQuery)
-    // Append '\r' — passes through PTY_WRITE handler (strips after \n, not \r)
     window.electronAPI.ptyWrite(command + '\r')
     focusXterm()
   }, [suggestion, startBlock, setSuggestion, focusXterm])
@@ -281,6 +294,7 @@ export default function Terminal() {
               <NLBar
                 config={config}
                 onFocusXterm={focusXterm}
+                onDirectExecute={handleDirectExecute}
                 disabled={isRunning}
               />
               {lastFailed && (

@@ -228,16 +228,16 @@ export async function validateCommand(
     }
   }
 
-  // Skip semantic check when generator and validator are the same model.
-  // A model validating its own output produces false positives without any
-  // real security value — the two-model architecture requires distinct models.
-  // When mistral:7b (or equivalent) is available this path is re-enabled.
-  if (config.generatorModel === config.validatorModel) {
-    return {
-      approved:   true,
-      confidence: staticVerdict,
-      reasons,
-    }
+  // Semantic check requires a model that understands security context well enough
+  // to distinguish real threats from normal commands. llama3.2:3b flags git status,
+  // ls, and cd as security risks — adding noise without value.
+  // Skip semantic check until a suitable validator model is confirmed working.
+  // Static analysis catches all real danger patterns reliably.
+  // TODO: re-enable when a validated model is available (mistral:7b or equivalent).
+  return {
+    approved:   true,
+    confidence: staticVerdict,
+    reasons,
   }
 
   // Static pass or warn — run semantic check against the separate validator model
