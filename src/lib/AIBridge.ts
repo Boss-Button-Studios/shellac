@@ -182,7 +182,6 @@ class GeneratorProvider {
         model:  config.generatorModel,
         prompt,
         stream: false,
-        format: 'json',
       }),
     })
 

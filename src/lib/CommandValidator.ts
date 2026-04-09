@@ -126,7 +126,6 @@ class ValidatorProvider {
         model:  config.validatorModel,
         prompt,
         stream: false,
-        format: 'json',
       }),
     })
 
