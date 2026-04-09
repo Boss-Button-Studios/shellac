@@ -182,6 +182,12 @@ class GeneratorProvider {
         model:  config.generatorModel,
         prompt,
         stream: false,
+        options: {
+          // Low temperature for deterministic command generation.
+          // Shell commands have correct answers — creativity is a bug here.
+          temperature: 0.2,
+          top_p:       0.9,
+        },
       }),
     })
 
