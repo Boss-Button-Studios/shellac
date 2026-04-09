@@ -98,7 +98,7 @@ export default function NLBar({ config, onFocusXterm, disabled }: Props) {
     }
   }, [value, loading, disabled, config, setSuggestion])
 
-  // ── Keyboard handler ───────────────────────────────────────────────────────
+  // ── Keyboard handler (on input element) ───────────────────────────────────
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()
@@ -113,17 +113,38 @@ export default function NLBar({ config, onFocusXterm, disabled }: Props) {
         setError(null)
         onFocusXterm()
       }
-    } else if (error) {
-      // Any key clears the error state (user is retrying)
-      setError(null)
     }
-  }, [handleSubmit, error, onFocusXterm])
+  }, [handleSubmit, onFocusXterm])
+
+  // ── Window-level keydown: clears error panel so the user isn't stuck ───────
+  // When the error panel is shown the <input> is unmounted, so handleKeyDown
+  // never fires. This listener catches any key and restores the input.
+  useEffect(() => {
+    if (!error) return
+    const handler = (e: KeyboardEvent) => {
+      // Don't steal modifier-only combos or tab navigation
+      if (e.key === 'Tab' || e.key === 'Meta' || e.key === 'Control' || e.key === 'Alt') return
+      setError(null)
+      // Re-focus the input on the next tick (after it mounts)
+      setTimeout(() => inputRef.current?.focus(), 0)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [error])
 
   // ── Error panels ──────────────────────────────────────────────────────────
+  const clearError = () => {
+    setError(null)
+    setTimeout(() => inputRef.current?.focus(), 0)
+  }
+
   if (error === 'ollama-unavailable') {
     return (
       <div style={styles.recovery}>
-        <div style={styles.recoveryTitle}>Ollama is not running.</div>
+        <div style={styles.recoveryRow}>
+          <div style={styles.recoveryTitle}>Ollama is not running.</div>
+          <button style={styles.recoveryDismiss} onClick={clearError} title="Dismiss">✕</button>
+        </div>
         <CopyLine label="Start it:" cmd="ollama serve" />
         <CopyLine label="Check it:" cmd="ollama list" />
         <div style={styles.recoveryHint}>
@@ -141,9 +162,12 @@ export default function NLBar({ config, onFocusXterm, disabled }: Props) {
   if (error) {
     return (
       <div style={styles.recovery}>
-        <div style={styles.recoveryTitle}>Model error</div>
+        <div style={styles.recoveryRow}>
+          <div style={styles.recoveryTitle}>Model error</div>
+          <button style={styles.recoveryDismiss} onClick={clearError} title="Dismiss">✕</button>
+        </div>
         <div style={styles.recoveryError}>{error}</div>
-        <div style={styles.recoveryHint}>Press any key to retry.</div>
+        <div style={styles.recoveryHint}>Press any key or click ✕ to retry.</div>
         <div style={styles.recoveryQuery}>
           <span style={styles.recoveryQueryLabel}>Your query: </span>
           <span style={styles.recoveryQueryText}>{value}</span>
@@ -273,6 +297,21 @@ const styles: Record<string, React.CSSProperties> = {
     padding:     '4px 0',
     fontFamily:  '-apple-system, system-ui, sans-serif',
     fontSize:    '12px',
+  },
+  recoveryRow: {
+    display:      'flex',
+    alignItems:   'center',
+    justifyContent: 'space-between',
+    marginBottom: '4px',
+  },
+  recoveryDismiss: {
+    background:  'transparent',
+    border:      'none',
+    color:       '#5A504A',
+    cursor:      'pointer',
+    fontSize:    '12px',
+    padding:     '0 2px',
+    lineHeight:  1,
   },
   recoveryTitle: {
     color:       '#E8DDD0',
