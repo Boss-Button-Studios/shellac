@@ -319,7 +319,7 @@ export async function translate(
   for (let attempt = 0; attempt < 3; attempt++) {
     // Per-attempt abort controller that respects the caller's signal
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 8_000)
+    const timer = setTimeout(() => controller.abort(), 60_000)
 
     // Forward caller cancellation to the per-attempt controller
     signal?.addEventListener('abort', () => controller.abort(), { once: true })

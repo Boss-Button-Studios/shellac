@@ -120,7 +120,7 @@ class ValidatorProvider {
   async generate(prompt: string, config: AppConfig): Promise<string> {
     const res = await fetch(`${config.ollamaBaseUrl}/api/generate`, {
       method: 'POST',
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(60_000),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model:  config.validatorModel,
