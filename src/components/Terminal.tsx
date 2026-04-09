@@ -246,8 +246,16 @@ export default function Terminal() {
           ))}
         </div>
 
-        {/* xterm live surface */}
-        <div ref={containerRef} style={styles.xtermContainer} />
+        {/* xterm live surface — slim strip: just enough for the active prompt + streaming output.
+            Hidden when no command is running and the suggestion card is up, so the NLBar
+            feels like the primary interface. Always present in the DOM so the PTY stays alive. */}
+        <div
+          ref={containerRef}
+          style={{
+            ...styles.xtermContainer,
+            height: isRunning ? '120px' : '28px',
+          }}
+        />
 
         {/* SuggestionCard — shown above input area when a suggestion is pending */}
         {suggestion && !isRunning && (
@@ -395,9 +403,10 @@ const styles: Record<string, React.CSSProperties> = {
     padding:   '0.5rem 0',
   },
   xtermContainer: {
-    flexShrink: 0,
-    height:     '240px',
-    padding:    '4px',
+    flexShrink:  0,
+    transition:  'height 120ms ease-out',
+    padding:     '4px',
+    overflow:    'hidden',
   },
   suggestionArea: {
     flexShrink: 0,
