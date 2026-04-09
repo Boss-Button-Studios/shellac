@@ -248,11 +248,29 @@ function ValidationRow({
   if (!validation || validation.confidence === 'pass') return null
 
   const isBlock = validation.confidence === 'block'
+
+  // Split reasons: static analysis (danger patterns) vs semantic (intent mismatch)
+  const staticReasons = validation.reasons.filter(r => !r.startsWith('intent:'))
+  const intentReasons = validation.reasons
+    .filter(r => r.startsWith('intent:'))
+    .map(r => r.slice('intent:'.length))
+
   return (
-    <div style={{ ...styles.validationRow, color: isBlock ? '#C46060' : '#D4855A' }}>
-      <span>{isBlock ? '✕ Blocked' : '⚠ Warning'}</span>
-      {validation.reasons.slice(0, 2).map((r, i) => (
-        <span key={i} style={styles.validationReason}>{r}</span>
+    <div style={styles.validationRow}>
+      {/* Static danger reasons — strong colour, shown for block/warn */}
+      {(isBlock || staticReasons.length > 0) && (
+        <div style={{ color: isBlock ? '#C46060' : '#D4855A' }}>
+          <span>{isBlock ? '✕ Blocked' : '⚠ Caution'}</span>
+          {staticReasons.slice(0, 2).map((r, i) => (
+            <span key={i} style={styles.validationReason}>{r}</span>
+          ))}
+        </div>
+      )}
+      {/* Intent mismatch reasons — muted, softer framing */}
+      {intentReasons.slice(0, 1).map((r, i) => (
+        <div key={i} style={styles.intentReason}>
+          ↳ May not match your intent: {r}
+        </div>
       ))}
     </div>
   )
@@ -421,6 +439,12 @@ const styles: Record<string, React.CSSProperties> = {
   validationReason: {
     color:       '#8A7D70',
     paddingLeft: '12px',
+  },
+  intentReason: {
+    color:       '#8A7D70',
+    fontSize:    '11px',
+    fontStyle:   'italic',
+    marginTop:   '2px',
   },
   explainRow: {
     marginBottom: '8px',

@@ -228,7 +228,19 @@ export async function validateCommand(
     }
   }
 
-  // Static pass or warn — run semantic check to confirm
+  // Skip semantic check when generator and validator are the same model.
+  // A model validating its own output produces false positives without any
+  // real security value — the two-model architecture requires distinct models.
+  // When mistral:7b (or equivalent) is available this path is re-enabled.
+  if (config.generatorModel === config.validatorModel) {
+    return {
+      approved:   true,
+      confidence: staticVerdict,
+      reasons,
+    }
+  }
+
+  // Static pass or warn — run semantic check against the separate validator model
   const semantic = await semanticCheck(command, nlQuery, config)
 
   // Combine: worst-of-two verdict wins
@@ -236,9 +248,11 @@ export async function validateCommand(
     ? 'warn'
     : 'pass'
 
+  // Prefix semantic reasons with "intent:" so SuggestionCard can render them
+  // with softer styling ("may not match intent") vs static reasons ("danger pattern").
   const allReasons = [
     ...reasons,
-    ...(semantic.reason ? [semantic.reason] : []),
+    ...(semantic.reason ? [`intent:${semantic.reason}`] : []),
   ]
 
   return {
