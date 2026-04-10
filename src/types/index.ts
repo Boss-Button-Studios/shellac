@@ -27,7 +27,7 @@ export interface SuggestedCommand {
 export interface CommandExplanation {
   summary: string;
   effects: string[];
-  reversible: boolean;       // conservative default: false on failure
+  reversible: boolean | null; // true = can be undone; false = destructive; null = uncertain
   requiresSudo: boolean;
   confidence: 'high' | 'low';
 }
@@ -49,8 +49,11 @@ export interface ValidationResult {
 export type SafetyLevel = 'newbie' | 'balanced' | 'pro';
 
 export interface AppConfig {
-  generatorModel: string;            // default: 'qwen2.5-coder:7b'
-  validatorModel: string;            // default: 'mistral:7b'
+  generatorModel:         string;    // NL→shell suggestion model
+  validatorModel:         string;    // primary validator — CPU-safe model
+  validatorGpuLayers:     number;    // 0 = CPU only; do not raise above confirmed-stable value
+  validatorPeerModel:     string;    // peer validator — second family, cross-checks primary
+  validatorPeerGpuLayers: number;    // GPU layer count confirmed stable for this model
   ollamaBaseUrl: string;             // default: 'http://localhost:11434'
   maxContextTokens: number;          // default: 4000
   maxOutputCharsPerBlock: number;    // default: 2000
@@ -67,7 +70,10 @@ export interface AppConfig {
 
 export const DEFAULT_CONFIG: AppConfig = {
   generatorModel:         'qwen2.5-coder:1.5b',
-  validatorModel:         'llama3.2:3b',
+  validatorModel:         'alibayram/ministral-3b-instruct:latest',
+  validatorGpuLayers:     0,
+  validatorPeerModel:     'qwen2.5-coder:3b',
+  validatorPeerGpuLayers: 22,
   ollamaBaseUrl:          'http://localhost:11434',
   maxContextTokens:       4000,
   maxOutputCharsPerBlock: 2000,

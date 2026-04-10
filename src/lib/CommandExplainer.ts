@@ -77,7 +77,7 @@ function parseExplanationResponse(raw: string): CommandExplanation | null {
       effects:       Array.isArray(parsed.effects)
                        ? (parsed.effects as unknown[]).filter(e => typeof e === 'string') as string[]
                        : [],
-      reversible:    typeof parsed.reversible   === 'boolean' ? parsed.reversible   : false,
+      reversible:    typeof parsed.reversible   === 'boolean' ? parsed.reversible   : null,
       requiresSudo:  typeof parsed.requiresSudo === 'boolean' ? parsed.requiresSudo : false,
       confidence:    parsed.confidence === 'high' ? 'high' : 'low',
     }
@@ -114,7 +114,7 @@ function parseResultResponse(raw: string): CommandResult | null {
 const EXPLAIN_DEFAULT: CommandExplanation = {
   summary:      'Unable to explain this command (Ollama unavailable).',
   effects:      [],
-  reversible:   false,     // safest assumption — warn user
+  reversible:   null,      // unknown — cannot assess without model
   requiresSudo: false,
   confidence:   'low',
 }
@@ -159,11 +159,12 @@ export async function explainCommand(
     'Return ONLY JSON with these fields:',
     '  summary: one plain-English sentence describing what the command does',
     '  effects: array of strings, each describing one concrete system effect',
-    '  reversible: boolean — true only if ALL effects can be fully undone',
+    '  reversible: true if read-only or fully undoable; false if destructive; null if uncertain',
+    '  Examples of true:  ls, cd, cat, pwd, git status, mkdir, touch',
+    '  Examples of false: rm, dd, truncate, mv onto existing file, curl | bash',
+    '  Use null when the command is unusual or context-dependent',
     '  requiresSudo: boolean — true if sudo or root privileges are needed',
     '  confidence: "high" if this is a standard command, "low" if complex or unusual',
-    '',
-    'Important: reversible must be false if any files are deleted, overwritten, or sent over a network.',
     '',
     `Command: ${command}`,
   ].join('\n')

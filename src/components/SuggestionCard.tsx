@@ -25,6 +25,17 @@ import type {
 // Characters that are NOT standard 7-bit ASCII — potential confusables
 const NON_ASCII = /[^\x00-\x7F]/g
 
+// ScopeState tracks the async semantic check result.
+// 'pending' while the model hasn't responded yet.
+// 'clear'   when no scope concerns were found.
+// 'warn'    when the model flagged an over-scoped flag (sudo, recursive, etc.).
+// This is separate from the static danger verdict — scope warnings are advisory.
+// Used once the model selection gate in validator-semantic-check.md is passed.
+export type ScopeState =
+  | { status: 'pending' }
+  | { status: 'clear' }
+  | { status: 'warn'; reason: string }
+
 interface Props {
   suggestion:  SuggestedCommand & { nlQuery?: string }
   config:      AppConfig
@@ -249,11 +260,17 @@ function ValidationRow({
 
   const isBlock = validation.confidence === 'block'
 
-  // Split reasons: static analysis (danger patterns) vs semantic (intent mismatch)
-  const staticReasons = validation.reasons.filter(r => !r.startsWith('intent:'))
+  // Split reasons by prefix:
+  //   no prefix  → static analysis danger (strong colour)
+  //   'intent:'  → coherence mismatch from semantic check (muted italic)
+  //   'scope:'   → over-scoped flag from semantic check (muted italic)
+  const staticReasons = validation.reasons.filter(r => !r.startsWith('intent:') && !r.startsWith('scope:'))
   const intentReasons = validation.reasons
     .filter(r => r.startsWith('intent:'))
     .map(r => r.slice('intent:'.length))
+  const scopeReasons  = validation.reasons
+    .filter(r => r.startsWith('scope:'))
+    .map(r => r.slice('scope:'.length))
 
   return (
     <div style={styles.validationRow}>
@@ -266,10 +283,15 @@ function ValidationRow({
           ))}
         </div>
       )}
-      {/* Intent mismatch reasons — muted, softer framing */}
+      {/* Intent/scope reasons from semantic check — muted, softer framing */}
       {intentReasons.slice(0, 1).map((r, i) => (
-        <div key={i} style={styles.intentReason}>
+        <div key={`intent-${i}`} style={styles.intentReason}>
           ↳ May not match your intent: {r}
+        </div>
+      ))}
+      {scopeReasons.slice(0, 2).map((r, i) => (
+        <div key={`scope-${i}`} style={styles.intentReason}>
+          ↳ {r}
         </div>
       ))}
     </div>
@@ -295,6 +317,9 @@ function ExplanationRow({
       <div style={styles.explainSummary}>{explanation.summary}</div>
       {explanation.reversible === false && (
         <div style={styles.irreversible}>Cannot be undone.</div>
+      )}
+      {explanation.reversible === null && (
+        <div style={styles.reversibleUnknown}>Reversibility unknown</div>
       )}
       {explanation.requiresSudo && (
         <div style={styles.sudoWarning}>Requires elevated privileges</div>
@@ -459,6 +484,11 @@ const styles: Record<string, React.CSSProperties> = {
   irreversible: {
     color:      '#D4855A',
     fontWeight: 600,
+    marginBottom: '2px',
+  },
+  reversibleUnknown: {
+    color:        '#5A504A',
+    fontStyle:    'italic',
     marginBottom: '2px',
   },
   sudoWarning: {
