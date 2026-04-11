@@ -1,4 +1,5 @@
 # Shellac
+
 AI-assisted terminal for Linux and Mac OS. Local, free, safe, and useful for newbies to pros.
 Shellac never stores or sends your activity data anywhere. Yours, to keep, for free, forever.
 
